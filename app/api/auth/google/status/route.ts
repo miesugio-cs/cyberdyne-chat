@@ -1,11 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-
+// Handled by custom server in server.ts
 export const dynamic = 'force-dynamic'
-
-export async function GET(request: NextRequest) {
-  const username = request.nextUrl.searchParams.get('username')
-  if (!username) return NextResponse.json({ connected: false })
-  const cal = await prisma.userCalendar.findUnique({ where: { username } })
-  return NextResponse.json({ connected: !!cal })
+export async function GET() {
+  return new Response('Handled by custom server', { status: 200 })
 }

@@ -1,27 +1,148 @@
-import { createServer } from 'http'
+import { createServer, IncomingMessage, ServerResponse } from 'http'
+import { parse as parseUrl } from 'url'
 import { Server } from 'socket.io'
 import next from 'next'
 import { PrismaClient } from './app/generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 import path from 'path'
 
+// ---- DB ----
 function getDbPath(): string {
   const url = process.env.DATABASE_URL ?? 'file:./dev.db'
   const filePath = url.replace(/^file:/, '')
   return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath)
 }
-
 const prisma = new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: getDbPath() }) } as never)
 
-// ---- Google Calendar ----
-type CalRecord = { username: string; accessToken: string; refreshToken: string; expiresAt: Date }
+// ---- HTTP helpers ----
+function jsonRes(res: ServerResponse, data: unknown, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(data))
+}
+function redirectRes(res: ServerResponse, location: string) {
+  res.writeHead(302, { Location: location })
+  res.end()
+}
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    let raw = ''
+    req.on('data', (chunk: Buffer) => { raw += chunk.toString() })
+    req.on('end', () => { try { resolve(JSON.parse(raw)) } catch { resolve({}) } })
+  })
+}
+function baseUrl(req: IncomingMessage): string {
+  const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0]?.trim() ?? 'http'
+  return `${proto}://${req.headers.host}`
+}
+
+// ---- Google OAuth — handled here so process.env is read at request time ----
+// (Next.js Route Handlers suffer Webpack static replacement at build time)
+async function handleGoogleOAuth(
+  req: IncomingMessage, res: ServerResponse,
+  pathname: string, query: Record<string, string | string[] | undefined>
+) {
+  const clientId     = process.env.GOOGLE_CLIENT_ID
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  const redirectUri  = process.env.GOOGLE_REDIRECT_URI
+
+  // GET /api/auth/google — start OAuth flow
+  if (pathname === '/api/auth/google') {
+    if (!clientId || !redirectUri) {
+      const missing = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI']
+        .filter(k => !process.env[k])
+      console.error('[Google Auth] Missing env vars:', missing.join(', '))
+      return jsonRes(res, { error: `Google Calendar not configured. Missing: ${missing.join(', ')}` }, 503)
+    }
+    const username = query.username as string | undefined
+    if (!username) return jsonRes(res, { error: 'Missing username' }, 400)
+
+    const state   = Buffer.from(JSON.stringify({ username })).toString('base64url')
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+    authUrl.searchParams.set('client_id',     clientId)
+    authUrl.searchParams.set('redirect_uri',  redirectUri)
+    authUrl.searchParams.set('response_type', 'code')
+    authUrl.searchParams.set('scope',         'https://www.googleapis.com/auth/calendar.readonly')
+    authUrl.searchParams.set('access_type',   'offline')
+    authUrl.searchParams.set('prompt',        'consent')
+    authUrl.searchParams.set('state',         state)
+    return redirectRes(res, authUrl.toString())
+  }
+
+  // GET /api/auth/google/callback — exchange code for tokens
+  if (pathname === '/api/auth/google/callback') {
+    const home  = baseUrl(req) + '/'
+    const code  = query.code  as string | undefined
+    const state = query.state as string | undefined
+    const error = query.error as string | undefined
+
+    if (error || !code || !state || !clientId || !clientSecret || !redirectUri) {
+      return redirectRes(res, home + '?calendar_error=1')
+    }
+
+    let username: string
+    try {
+      username = JSON.parse(Buffer.from(state, 'base64url').toString()).username
+      if (!username) throw new Error()
+    } catch { return redirectRes(res, home + '?calendar_error=1') }
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code, client_id: clientId, client_secret: clientSecret,
+        redirect_uri: redirectUri, grant_type: 'authorization_code',
+      }),
+    })
+    if (!tokenRes.ok) return redirectRes(res, home + '?calendar_error=1')
+
+    const tokens   = await tokenRes.json()
+    const existing = await prisma.userCalendar.findUnique({ where: { username } })
+    await prisma.userCalendar.upsert({
+      where:  { username },
+      update: {
+        accessToken: tokens.access_token,
+        ...(tokens.refresh_token && { refreshToken: tokens.refresh_token }),
+        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+      },
+      create: {
+        username,
+        accessToken:  tokens.access_token,
+        refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? '',
+        expiresAt:    new Date(Date.now() + tokens.expires_in * 1000),
+      },
+    })
+    return redirectRes(res, home + '?calendar_connected=1')
+  }
+
+  // GET /api/auth/google/status
+  if (pathname === '/api/auth/google/status') {
+    const username = query.username as string | undefined
+    if (!username) return jsonRes(res, { connected: false })
+    const cal = await prisma.userCalendar.findUnique({ where: { username } })
+    return jsonRes(res, { connected: !!cal })
+  }
+
+  // POST /api/auth/google/disconnect
+  if (pathname === '/api/auth/google/disconnect' && req.method === 'POST') {
+    const body = await readBody(req)
+    const username = body.username as string | undefined
+    if (!username) return jsonRes(res, { error: 'Missing username' }, 400)
+    await prisma.userCalendar.deleteMany({ where: { username } })
+    return jsonRes(res, { ok: true })
+  }
+
+  jsonRes(res, { error: 'Not found' }, 404)
+}
+
+// ---- Google Calendar status polling ----
+type CalRecord    = { username: string; accessToken: string; refreshToken: string; expiresAt: Date }
 type MeetingStatus = { inMeeting: boolean; eventTitle: string; endTime: string }
 let cachedStatuses: Record<string, MeetingStatus> = {}
 
 async function getValidAccessToken(cal: CalRecord): Promise<string> {
   if (cal.expiresAt > new Date()) return cal.accessToken
   const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id:     process.env.GOOGLE_CLIENT_ID ?? '',
@@ -34,7 +155,7 @@ async function getValidAccessToken(cal: CalRecord): Promise<string> {
   const t = await res.json()
   await prisma.userCalendar.update({
     where: { username: cal.username },
-    data: { accessToken: t.access_token, expiresAt: new Date(Date.now() + t.expires_in * 1000) },
+    data:  { accessToken: t.access_token, expiresAt: new Date(Date.now() + t.expires_in * 1000) },
   })
   return t.access_token
 }
@@ -43,11 +164,11 @@ async function fetchMeetingStatus(cal: CalRecord): Promise<MeetingStatus> {
   const token = await getValidAccessToken(cal)
   const now   = new Date()
   const url   = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
-  url.searchParams.set('timeMin',       new Date(now.getTime() - 8 * 3600_000).toISOString())
-  url.searchParams.set('timeMax',       new Date(now.getTime() +      60_000).toISOString())
-  url.searchParams.set('singleEvents',  'true')
-  url.searchParams.set('orderBy',       'startTime')
-  url.searchParams.set('maxResults',    '10')
+  url.searchParams.set('timeMin',      new Date(now.getTime() - 8 * 3600_000).toISOString())
+  url.searchParams.set('timeMax',      new Date(now.getTime() +      60_000).toISOString())
+  url.searchParams.set('singleEvents', 'true')
+  url.searchParams.set('orderBy',      'startTime')
+  url.searchParams.set('maxResults',   '10')
   const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) throw new Error(`Calendar API error: ${res.status}`)
   const data   = await res.json()
@@ -59,11 +180,11 @@ async function fetchMeetingStatus(cal: CalRecord): Promise<MeetingStatus> {
   return { inMeeting: true, eventTitle: active.summary ?? '予定あり', endTime: active.end.dateTime }
 }
 
+// ---- App setup ----
 const DEFAULT_CHANNELS = ['general', '経理・事務', 'odori-fit', '潜在美学-yt']
-
-const dev = process.env.NODE_ENV !== 'production'
+const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT ?? '3000', 10)
-const app = next({ dev, port })
+const app  = next({ dev, port })
 const handle = app.getRequestHandler()
 
 async function seedChannels() {
@@ -73,7 +194,6 @@ async function seedChannels() {
   }
 }
 
-// ユーザーが見られるチャンネル一覧（パブリック + 招待済みプライベート）
 async function getChannelsForUser(username: string) {
   const channels = await prisma.channel.findMany({
     orderBy: { createdAt: 'asc' },
@@ -85,10 +205,26 @@ async function getChannelsForUser(username: string) {
 app.prepare().then(async () => {
   await seedChannels()
 
-  const httpServer = createServer(handle)
+  // Google OAuth routes are intercepted BEFORE Next.js to avoid Webpack env-var inlining
+  const httpServer = createServer(async (req, res) => {
+    const parsed   = parseUrl(req.url!, true)
+    const pathname = parsed.pathname ?? ''
+
+    if (pathname.startsWith('/api/auth/google')) {
+      try {
+        await handleGoogleOAuth(req, res, pathname, parsed.query as Record<string, string | undefined>)
+      } catch (err) {
+        console.error('[Google OAuth Error]', err)
+        res.writeHead(500); res.end('Internal Server Error')
+      }
+      return
+    }
+
+    handle(req, res, parsed)
+  })
+
   const io = new Server(httpServer)
 
-  // 5分ごとにカレンダーステータスを取得してブロードキャスト
   async function refreshCalendarStatuses() {
     if (!process.env.GOOGLE_CLIENT_ID) return
     const calendars = await prisma.userCalendar.findMany()
@@ -112,7 +248,6 @@ app.prepare().then(async () => {
     setInterval(() => refreshCalendarStatuses(), 5 * 60_000)
   }
 
-  // 各ソケットにパーソナライズされたチャンネル一覧を送信
   async function broadcastChannels() {
     const allChannels = await prisma.channel.findMany({
       orderBy: { createdAt: 'asc' },
@@ -122,10 +257,9 @@ app.prepare().then(async () => {
     for (const s of sockets) {
       const uname = (s.handshake.auth as { username?: string }).username
       if (!uname) continue
-      const userChannels = allChannels.filter(
+      s.emit('channel_list', allChannels.filter(
         (ch) => !ch.isPrivate || ch.members.some((m) => m.username === uname)
-      )
-      s.emit('channel_list', userChannels)
+      ))
     }
   }
 
@@ -134,30 +268,22 @@ app.prepare().then(async () => {
     io.emit('user_profiles', Object.fromEntries(profiles.map((p) => [p.username, p.avatarUrl])))
   }
 
-  // プライベートチャンネルはメンバーのみに、パブリックは全員に送信
   async function emitNewMessage(channelId: number, isPrivate: boolean, memberUsernames: string[], message: object) {
-    if (!isPrivate) {
-      io.emit('new_message', message)
-    } else {
-      const memberSet = new Set(memberUsernames)
-      const sockets = await io.fetchSockets()
-      for (const s of sockets) {
-        const uname = (s.handshake.auth as { username?: string }).username
-        if (uname && memberSet.has(uname)) s.emit('new_message', message)
-      }
+    if (!isPrivate) { io.emit('new_message', message); return }
+    const memberSet = new Set(memberUsernames)
+    const sockets   = await io.fetchSockets()
+    for (const s of sockets) {
+      const uname = (s.handshake.auth as { username?: string }).username
+      if (uname && memberSet.has(uname)) s.emit('new_message', message)
     }
   }
 
   io.on('connection', async (socket) => {
     const username = (socket.handshake.auth as { username?: string }).username ?? ''
 
-    // 接続時: カレンダーステータス（キャッシュ済み）を送信
     socket.emit('user_statuses', cachedStatuses)
-
-    // OAuth コールバック後にクライアントから通知 → 即時リフレッシュ
     socket.on('calendar_connected', () => refreshCalendarStatuses())
 
-    // 初回: チャンネル一覧・プロフィール・最初のチャンネル履歴
     const channels = await getChannelsForUser(username)
     socket.emit('channel_list', channels)
 
@@ -173,113 +299,81 @@ app.prepare().then(async () => {
       socket.emit('history', { channelId: channels[0].id, messages })
     }
 
-    // チャンネル切り替え
     socket.on('join_channel', async (channelId: number) => {
       const channel = await prisma.channel.findUnique({
-        where: { id: channelId },
-        include: { members: { select: { username: true } } },
+        where: { id: channelId }, include: { members: { select: { username: true } } },
       })
       if (!channel) return
       if (channel.isPrivate && !channel.members.some((m) => m.username === username)) return
-
       const messages = await prisma.message.findMany({
-        where: { channelId },
-        orderBy: { createdAt: 'asc' },
-        take: 30,
+        where: { channelId }, orderBy: { createdAt: 'asc' }, take: 30,
       })
       socket.emit('history', { channelId, messages })
     })
 
-    // メッセージ送信（添付ファイル対応）
     socket.on('send_message', async (data: {
       username: string; content: string; channelId: number
       attachmentData?: string; attachmentName?: string; attachmentType?: string
     }) => {
       const channel = await prisma.channel.findUnique({
-        where: { id: data.channelId },
-        include: { members: { select: { username: true } } },
+        where: { id: data.channelId }, include: { members: { select: { username: true } } },
       })
       if (!channel) return
       if (channel.isPrivate && !channel.members.some((m) => m.username === username)) return
-
       const message = await prisma.message.create({
         data: {
-          username: data.username,
-          content: data.content ?? '',
+          username: data.username, content: data.content ?? '',
           channelId: data.channelId,
           attachmentData: data.attachmentData ?? null,
           attachmentName: data.attachmentName ?? null,
           attachmentType: data.attachmentType ?? null,
         },
       })
-      await emitNewMessage(
-        channel.id,
-        channel.isPrivate,
-        channel.members.map((m) => m.username),
-        message,
-      )
+      await emitNewMessage(channel.id, channel.isPrivate, channel.members.map((m) => m.username), message)
     })
 
-    // チャンネル作成
     socket.on('create_channel', async ({ name, isPrivate }: { name: string; isPrivate?: boolean }) => {
       try {
         const channel = await prisma.channel.create({ data: { name: name.trim(), isPrivate: isPrivate ?? false } })
-        if (isPrivate) {
-          await prisma.channelMember.create({ data: { channelId: channel.id, username } })
-        }
+        if (isPrivate) await prisma.channelMember.create({ data: { channelId: channel.id, username } })
         await broadcastChannels()
-      } catch {
-        socket.emit('channel_error', 'そのチャンネル名はすでに存在します')
-      }
+      } catch { socket.emit('channel_error', 'そのチャンネル名はすでに存在します') }
     })
 
-    // チャンネル削除
     socket.on('delete_channel', async (id: number) => {
       await prisma.channel.delete({ where: { id } })
       await broadcastChannels()
     })
 
-    // チャンネル名変更
     socket.on('rename_channel', async ({ id, name }: { id: number; name: string }) => {
       try {
         await prisma.channel.update({ where: { id }, data: { name: name.trim() } })
         await broadcastChannels()
-      } catch {
-        socket.emit('channel_error', 'そのチャンネル名はすでに存在します')
-      }
+      } catch { socket.emit('channel_error', 'そのチャンネル名はすでに存在します') }
     })
 
-    // プライベートチャンネルへの招待
     socket.on('invite_to_channel', async ({ channelId, inviteeUsername }: { channelId: number; inviteeUsername: string }) => {
       const isMember = await prisma.channelMember.findUnique({
         where: { channelId_username: { channelId, username } },
       })
       if (!isMember) return socket.emit('channel_error', 'このチャンネルのメンバーではありません')
-
       await prisma.channelMember.upsert({
-        where: { channelId_username: { channelId, username: inviteeUsername } },
+        where:  { channelId_username: { channelId, username: inviteeUsername } },
         update: {},
         create: { channelId, username: inviteeUsername },
       })
-
-      // 招待されたユーザーのソケットにチャンネル一覧を送信
       const sockets = await io.fetchSockets()
       const inviteeSocket = sockets.find(
         (s) => (s.handshake.auth as { username?: string }).username === inviteeUsername
       )
       if (inviteeSocket) {
-        const inviteeChannels = await getChannelsForUser(inviteeUsername)
-        inviteeSocket.emit('channel_list', inviteeChannels)
+        inviteeSocket.emit('channel_list', await getChannelsForUser(inviteeUsername))
       }
-
       await broadcastChannels()
       socket.emit('invite_success', inviteeUsername)
     })
 
-    // アバターアップロード後にプロフィールを全員に配信
-    socket.on('update_profile', async () => {
-      await broadcastProfiles()
-    })
+    socket.on('update_profile', async () => { await broadcastProfiles() })
   })
 
   httpServer.listen(port, () => {

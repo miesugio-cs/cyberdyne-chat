@@ -1,11 +1,5 @@
-import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-
+// Handled by custom server in server.ts
 export const dynamic = 'force-dynamic'
-
-export async function POST(request: Request) {
-  const { username } = await request.json()
-  if (!username) return NextResponse.json({ error: 'Missing username' }, { status: 400 })
-  await prisma.userCalendar.deleteMany({ where: { username } })
-  return NextResponse.json({ ok: true })
+export async function POST() {
+  return new Response('Handled by custom server', { status: 200 })
 }
