@@ -324,6 +324,8 @@ export default function ChatPage() {
   const [colors, setColors]             = useState<ThemeColors>(DEFAULT_COLORS)
   const [profileCard, setProfileCard]   = useState<string | null>(null)
   const [showCalPopup, setShowCalPopup] = useState(false)
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
+  const [editInput, setEditInput]               = useState('')
 
   // チャンネル操作
   const [showAddModal, setShowAddModal]       = useState(false)
@@ -381,6 +383,12 @@ export default function ChatPage() {
     socket.on('user_statuses', (statuses: Record<string, MeetingStatus>) => setUserStatuses(statuses))
     socket.on('channel_error', (msg: string) => setErrorMsg(msg))
     socket.on('invite_success', (invitee: string) => setInviteSuccess(`${invitee} を招待しました`))
+    socket.on('message_edited', (msg: Message) => {
+      setMessages(prev => prev.map(m => m.id === msg.id ? msg : m))
+    })
+    socket.on('message_deleted', ({ messageId }: { messageId: number }) => {
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+    })
 
     const params = new URLSearchParams(window.location.search)
     if (params.get('calendar_connected') === '1') {
@@ -452,6 +460,14 @@ export default function ChatPage() {
       setUserProfiles(prev => ({ ...prev, [username]: { ...(prev[username] ?? { email: null, title: null }), avatarUrl } }))
       socketRef.current?.emit('update_profile')
     }
+  }
+  function handleEditSave(messageId: number) {
+    const trimmed = editInput.trim(); if (!trimmed) return
+    socketRef.current?.emit('edit_message', { messageId, content: trimmed })
+    setEditingMessageId(null)
+  }
+  function handleDeleteMessage(messageId: number) {
+    socketRef.current?.emit('delete_message', { messageId })
   }
   function handleSaveProfileDetails(email: string, title: string) {
     socketRef.current?.emit('update_profile_details', { email, title })
@@ -567,8 +583,9 @@ export default function ChatPage() {
             const isMe      = msg.username === username
             const avatarUrl = userProfiles[msg.username]?.avatarUrl
             const msgStatus = userStatuses[msg.username]
+            const isEditing = editingMessageId === msg.id
             return (
-              <div key={msg.id} className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
+              <div key={msg.id} className={`flex items-end gap-2 group ${isMe ? 'justify-end' : 'justify-start'}`}>
                 {/* Other user avatar — clickable */}
                 {!isMe && (
                   <div className="relative shrink-0">
@@ -581,7 +598,21 @@ export default function ChatPage() {
                   </div>
                 )}
 
-                <div className={`max-w-xs lg:max-w-md flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                {/* Edit / Delete buttons — own messages only */}
+                {isMe && !isEditing && (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 self-center">
+                    <button onClick={() => { setEditingMessageId(msg.id); setEditInput(msg.content) }}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors" title="編集">
+                      <PencilIcon />
+                    </button>
+                    <button onClick={() => handleDeleteMessage(msg.id)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors" title="削除">
+                      <TrashIcon />
+                    </button>
+                  </div>
+                )}
+
+                <div className={`flex flex-col ${isEditing ? 'w-64' : 'max-w-xs lg:max-w-md'} ${isMe ? 'items-end' : 'items-start'}`}>
                   {/* Username + meeting status */}
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1 ml-1 flex-wrap">
@@ -593,23 +624,47 @@ export default function ChatPage() {
                       )}
                     </div>
                   )}
-                  {(msg.content || !msg.attachmentData) && (
-                    <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'theme-msg-self rounded-tr-none' : 'theme-msg-other rounded-tl-none'}`}>
-                      {msg.content || '(添付ファイル)'}
+
+                  {isEditing ? (
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <textarea
+                        value={editInput}
+                        onChange={e => setEditInput(e.target.value)}
+                        className="bg-gray-700 text-white rounded-xl px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                        rows={Math.max(1, Math.min(5, editInput.split('\n').length + 1))}
+                        autoFocus
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSave(msg.id) }
+                          if (e.key === 'Escape') setEditingMessageId(null)
+                        }}
+                      />
+                      <div className="flex gap-1.5 justify-end text-xs">
+                        <button onClick={() => setEditingMessageId(null)} className="px-2 py-1 text-gray-400 hover:text-white transition-colors">キャンセル</button>
+                        <button onClick={() => handleEditSave(msg.id)} className="px-2 py-1 theme-accent-btn text-white rounded-md">保存</button>
+                      </div>
                     </div>
-                  )}
-                  {msg.attachmentData && (
-                    <div className={`mt-1 flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                      {msg.attachmentType?.startsWith('image/') ? (
-                        <img src={msg.attachmentData} alt={msg.attachmentName ?? 'image'} className="max-w-xs max-h-64 rounded-xl object-contain cursor-pointer" loading="lazy"
-                          onClick={() => { const a = document.createElement('a'); a.href = msg.attachmentData!; a.download = msg.attachmentName??'image'; a.click() }} />
-                      ) : (
-                        <a href={msg.attachmentData} download={msg.attachmentName} className="flex items-center gap-2 bg-gray-700/70 hover:bg-gray-700 px-3 py-2 rounded-xl text-sm text-gray-300 transition-colors max-w-xs">
-                          <FileIcon /><span className="truncate">{msg.attachmentName}</span>
-                        </a>
+                  ) : (
+                    <>
+                      {(msg.content || !msg.attachmentData) && (
+                        <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'theme-msg-self rounded-tr-none' : 'theme-msg-other rounded-tl-none'}`}>
+                          {msg.content || '(添付ファイル)'}
+                        </div>
                       )}
-                    </div>
+                      {msg.attachmentData && (
+                        <div className={`mt-1 flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                          {msg.attachmentType?.startsWith('image/') ? (
+                            <img src={msg.attachmentData} alt={msg.attachmentName ?? 'image'} className="max-w-xs max-h-64 rounded-xl object-contain cursor-pointer" loading="lazy"
+                              onClick={() => { const a = document.createElement('a'); a.href = msg.attachmentData!; a.download = msg.attachmentName??'image'; a.click() }} />
+                          ) : (
+                            <a href={msg.attachmentData} download={msg.attachmentName} className="flex items-center gap-2 bg-gray-700/70 hover:bg-gray-700 px-3 py-2 rounded-xl text-sm text-gray-300 transition-colors max-w-xs">
+                              <FileIcon /><span className="truncate">{msg.attachmentName}</span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
+
                   <span className="text-xs mt-1 mx-1 theme-chat-muted">
                     {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
                   </span>

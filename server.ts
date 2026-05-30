@@ -377,6 +377,21 @@ app.prepare().then(async () => {
       socket.emit('invite_success', inviteeUsername)
     })
 
+    socket.on('edit_message', async ({ messageId, content }: { messageId: number; content: string }) => {
+      const trimmed = content.trim(); if (!trimmed) return
+      const msg = await prisma.message.findUnique({ where: { id: messageId } })
+      if (!msg || msg.username !== username) return
+      const updated = await prisma.message.update({ where: { id: messageId }, data: { content: trimmed } })
+      io.emit('message_edited', updated)
+    })
+
+    socket.on('delete_message', async ({ messageId }: { messageId: number }) => {
+      const msg = await prisma.message.findUnique({ where: { id: messageId } })
+      if (!msg || msg.username !== username) return
+      await prisma.message.delete({ where: { id: messageId } })
+      io.emit('message_deleted', { messageId, channelId: msg.channelId })
+    })
+
     socket.on('update_profile', async () => { await broadcastProfiles() })
 
     socket.on('update_profile_details', async ({ email, title }: { email?: string; title?: string }) => {
