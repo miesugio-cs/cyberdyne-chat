@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Channel {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  messages  Message[]
+  createdAt DateTime  @default(now())
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  username  String
+  content   String
+  channelId Int
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model UserProfile {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  avatarUrl String?
+  updatedAt DateTime @updatedAt
+}
