@@ -8,19 +8,34 @@ datasource db {
 }
 
 model Channel {
-  id        Int       @id @default(autoincrement())
-  name      String    @unique
+  id        Int             @id @default(autoincrement())
+  name      String          @unique
+  isPrivate Boolean         @default(false)
   messages  Message[]
-  createdAt DateTime  @default(now())
+  members   ChannelMember[]
+  createdAt DateTime        @default(now())
+}
+
+model ChannelMember {
+  id        Int      @id @default(autoincrement())
+  channelId Int
+  username  String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([channelId, username])
 }
 
 model Message {
-  id        Int      @id @default(autoincrement())
-  username  String
-  content   String
-  channelId Int
-  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  username       String
+  content        String
+  channelId      Int
+  channel        Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  attachmentData String?
+  attachmentName String?
+  attachmentType String?
+  createdAt      DateTime @default(now())
 }
 
 model UserProfile {
