@@ -5,8 +5,13 @@ import { PrismaClient } from './app/generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 import path from 'path'
 
-const dbPath = path.resolve(process.cwd(), 'dev.db')
-const adapter = new PrismaBetterSqlite3({ url: dbPath })
+function getDbPath(): string {
+  const url = process.env.DATABASE_URL ?? 'file:./dev.db'
+  const filePath = url.replace(/^file:/, '')
+  return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath)
+}
+
+const adapter = new PrismaBetterSqlite3({ url: getDbPath() })
 const prisma = new PrismaClient({ adapter } as never)
 
 const DEFAULT_CHANNELS = ['general', '経理・事務', 'odori-fit', '潜在美学-yt']
