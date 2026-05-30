@@ -265,7 +265,9 @@ app.prepare().then(async () => {
 
   async function broadcastProfiles() {
     const profiles = await prisma.userProfile.findMany()
-    io.emit('user_profiles', Object.fromEntries(profiles.map((p) => [p.username, p.avatarUrl])))
+    io.emit('user_profiles', Object.fromEntries(
+      profiles.map((p) => [p.username, { avatarUrl: p.avatarUrl, email: p.email, title: p.title }])
+    ))
   }
 
   async function emitNewMessage(channelId: number, isPrivate: boolean, memberUsernames: string[], message: object) {
@@ -288,7 +290,9 @@ app.prepare().then(async () => {
     socket.emit('channel_list', channels)
 
     const profiles = await prisma.userProfile.findMany()
-    socket.emit('user_profiles', Object.fromEntries(profiles.map((p) => [p.username, p.avatarUrl])))
+    socket.emit('user_profiles', Object.fromEntries(
+      profiles.map((p) => [p.username, { avatarUrl: p.avatarUrl, email: p.email, title: p.title }])
+    ))
 
     if (channels.length > 0) {
       const messages = await prisma.message.findMany({
@@ -374,6 +378,15 @@ app.prepare().then(async () => {
     })
 
     socket.on('update_profile', async () => { await broadcastProfiles() })
+
+    socket.on('update_profile_details', async ({ email, title }: { email?: string; title?: string }) => {
+      await prisma.userProfile.upsert({
+        where:  { username },
+        update: { email: email || null, title: title || null },
+        create: { username, avatarUrl: null, email: email || null, title: title || null },
+      })
+      await broadcastProfiles()
+    })
   })
 
   httpServer.listen(port, () => {

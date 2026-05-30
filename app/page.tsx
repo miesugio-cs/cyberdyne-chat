@@ -13,6 +13,7 @@ interface Message {
   attachmentData: string | null; attachmentName: string | null; attachmentType: string | null
   createdAt: string
 }
+interface UserProfileData { avatarUrl: string | null; email: string | null; title: string | null }
 interface Attachment { data: string; name: string; type: string }
 interface ThemeColors { sidebar: string; chat: string; accent: string }
 interface MeetingStatus { inMeeting: boolean; eventTitle: string; endTime: string }
@@ -26,41 +27,29 @@ function avatarBgColor(username: string): string {
   let h = 0; for (const c of username) h = (h * 31 + c.charCodeAt(0)) | 0
   return palette[Math.abs(h) % palette.length]
 }
-
 function getLuminance(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16) / 255
-  const g = parseInt(hex.slice(3, 5), 16) / 255
-  const b = parseInt(hex.slice(5, 7), 16) / 255
-  const lin = (c: number) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255
+  const lin = (c: number) => c <= 0.04045 ? c/12.92 : ((c+0.055)/1.055)**2.4
+  return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
 }
-
 function buildThemeVars(colors: ThemeColors): string {
-  const sLum = getLuminance(colors.sidebar), cLum = getLuminance(colors.chat), aLum = getLuminance(colors.accent)
-  return (
-    `--sidebar-bg:${colors.sidebar};--chat-bg:${colors.chat};--accent:${colors.accent};` +
-    `--sidebar-text:${sLum > 0.179 ? '#111827' : '#f9fafb'};` +
-    `--sidebar-muted:${sLum > 0.179 ? '#6b7280' : '#9ca3af'};` +
-    `--chat-muted:${cLum > 0.179 ? '#6b7280' : '#9ca3af'};` +
-    `--accent-text:${aLum > 0.179 ? '#111827' : '#ffffff'};` +
-    `--msg-bubble-bg:${cLum > 0.179 ? '#e5e7eb' : '#374151'};` +
-    `--msg-bubble-text:${cLum > 0.179 ? '#111827' : '#f3f4f6'};`
-  )
+  const sL = getLuminance(colors.sidebar), cL = getLuminance(colors.chat), aL = getLuminance(colors.accent)
+  return `--sidebar-bg:${colors.sidebar};--chat-bg:${colors.chat};--accent:${colors.accent};`+
+    `--sidebar-text:${sL>0.179?'#111827':'#f9fafb'};--sidebar-muted:${sL>0.179?'#6b7280':'#9ca3af'};`+
+    `--chat-muted:${cL>0.179?'#6b7280':'#9ca3af'};--accent-text:${aL>0.179?'#111827':'#ffffff'};`+
+    `--msg-bubble-bg:${cL>0.179?'#e5e7eb':'#374151'};--msg-bubble-text:${cL>0.179?'#111827':'#f3f4f6'};`
 }
-
 function formatTime(iso: string): string {
   if (!iso) return ''
   return new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 }
-
-// Canvas でリサイズ（アバター用: center-crop → 128px 正方形）
 function resizeImageToDataUrl(file: File, maxPx = 128): Promise<string> {
   return new Promise((resolve, reject) => {
-    const img = new Image(); const url = URL.createObjectURL(file)
+    const img = new Image(), url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
       const { naturalWidth: w, naturalHeight: h } = img
-      const crop = Math.min(w, h); const sx = (w - crop) / 2; const sy = (h - crop) / 2
+      const crop = Math.min(w,h), sx = (w-crop)/2, sy = (h-crop)/2
       const canvas = document.createElement('canvas'); canvas.width = maxPx; canvas.height = maxPx
       canvas.getContext('2d')!.drawImage(img, sx, sy, crop, crop, 0, 0, maxPx, maxPx)
       resolve(canvas.toDataURL('image/jpeg', 0.85))
@@ -68,24 +57,21 @@ function resizeImageToDataUrl(file: File, maxPx = 128): Promise<string> {
     img.onerror = reject; img.src = url
   })
 }
-
-// 添付画像: 長辺を最大 maxPx にスケールダウン（縦横比維持）
 function resizeAttachmentImage(file: File, maxPx = 1200): Promise<string> {
   return new Promise((resolve, reject) => {
-    const img = new Image(); const url = URL.createObjectURL(file)
+    const img = new Image(), url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
       const { naturalWidth: w, naturalHeight: h } = img
-      const scale = Math.min(1, maxPx / Math.max(w, h))
+      const scale = Math.min(1, maxPx/Math.max(w,h))
       const canvas = document.createElement('canvas')
-      canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale)
+      canvas.width = Math.round(w*scale); canvas.height = Math.round(h*scale)
       canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
       resolve(canvas.toDataURL('image/jpeg', 0.80))
     }
     img.onerror = reject; img.src = url
   })
 }
-
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -104,16 +90,59 @@ function InviteIcon()   { return <svg className="w-3.5 h-3.5" viewBox="0 0 16 16
 function GearIcon()     { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M2.93 2.93l1.06 1.06M12.01 12.01l1.06 1.06M2.93 13.07l1.06-1.06M12.01 3.99l1.06-1.06"/></svg> }
 function CameraIcon()   { return <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4h14v10H1zM5 4l1-3h4l1 3"/><circle cx="8" cy="9" r="2.5"/></svg> }
 function SpinnerIcon()  { return <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2a6 6 0 0 1 6 6"/></svg> }
-function PaperclipIcon({ className }: { className?: string }) { return <svg className={`w-4 h-4 ${className ?? ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 7.5l-6 6a3.5 3.5 0 0 1-5-5l7-7a2 2 0 0 1 3 3l-7 7a.5.5 0 0 1-1-1l6-6"/></svg> }
+function PaperclipIcon({ className }: { className?: string }) { return <svg className={`w-4 h-4 ${className??''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 7.5l-6 6a3.5 3.5 0 0 1-5-5l7-7a2 2 0 0 1 3 3l-7 7a.5.5 0 0 1-1-1l6-6"/></svg> }
 function XIcon()        { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg> }
 function FileIcon()     { return <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 1H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6L9 1z"/><path d="M9 1v5h5"/></svg> }
 
-// ---- Sub-components ----
+// ---- Base components ----
 function Avatar({ username, avatarUrl, size = 32 }: { username: string; avatarUrl?: string | null; size?: number }) {
   if (avatarUrl) return <img src={avatarUrl} alt={username} className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />
-  return <div className="rounded-full flex items-center justify-center shrink-0 font-bold text-white select-none" style={{ width: size, height: size, backgroundColor: avatarBgColor(username), fontSize: size * 0.38 }}>{username[0]?.toUpperCase()}</div>
+  return <div className="rounded-full flex items-center justify-center shrink-0 font-bold text-white select-none" style={{ width: size, height: size, backgroundColor: avatarBgColor(username), fontSize: size*0.38 }}>{username[0]?.toUpperCase()}</div>
 }
 
+function Modal({ children, title, onClose }: { children: React.ReactNode; title: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-gray-800 rounded-xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+        {title && <h2 className="text-white font-semibold text-base mb-4">{title}</h2>}
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// ---- Profile Card ----
+function ProfileCard({ username, profile, status, onClose }: {
+  username: string; profile: UserProfileData | undefined
+  status: MeetingStatus | undefined; onClose: () => void
+}) {
+  return (
+    <Modal onClose={onClose} title="">
+      <div className="flex flex-col items-center gap-4">
+        <Avatar username={username} avatarUrl={profile?.avatarUrl} size={80} />
+        <div className="text-center">
+          <p className="text-white font-bold text-xl">{username}</p>
+          {profile?.title && <p className="text-gray-300 text-sm mt-0.5">{profile.title}</p>}
+          {profile?.email && <p className="text-gray-400 text-xs mt-1">{profile.email}</p>}
+        </div>
+        {status !== undefined ? (
+          status.inMeeting ? (
+            <div className="w-full bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3">
+              <p className="text-blue-400 text-sm font-medium">🗓️ In a meeting ～{formatTime(status.endTime)}</p>
+              {status.eventTitle && <p className="text-gray-300 text-xs mt-1">{status.eventTitle}</p>}
+            </div>
+          ) : (
+            <div className="w-full bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
+              <p className="text-green-400 text-sm">✓ 対応可能</p>
+            </div>
+          )
+        ) : null}
+      </div>
+    </Modal>
+  )
+}
+
+// ---- Channel list item ----
 function ChannelItem({ channel, isActive, onClick, onRename, onDelete, onInvite }: {
   channel: Channel; isActive: boolean
   onClick: () => void; onRename: () => void; onDelete: () => void; onInvite: () => void
@@ -137,17 +166,7 @@ function ChannelItem({ channel, isActive, onClick, onRename, onDelete, onInvite 
   )
 }
 
-function Modal({ children, title, onClose }: { children: React.ReactNode; title: string; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-800 rounded-xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-white font-semibold text-base mb-4">{title}</h2>
-        {children}
-      </div>
-    </div>
-  )
-}
-
+// ---- Color picker row ----
 function ColorRow({ label, value, defaultValue, onChange }: { label: string; value: string; defaultValue: string; onChange: (v: string) => void }) {
   return (
     <div className="flex items-center justify-between gap-4">
@@ -164,16 +183,28 @@ function ColorRow({ label, value, defaultValue, onChange }: { label: string; val
   )
 }
 
-function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatarUpload, onClose }: {
-  username: string; myAvatarUrl?: string | null
+// ---- Settings Modal ----
+function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUpload, onSaveProfileDetails, onClose }: {
+  username: string; myProfile: UserProfileData | undefined
   colors: ThemeColors; onColorsChange: (c: ThemeColors) => void
-  onAvatarUpload: (file: File) => Promise<void>; onClose: () => void
+  onAvatarUpload: (file: File) => Promise<void>
+  onSaveProfileDetails: (email: string, title: string) => void
+  onClose: () => void
 }) {
-  const [tab, setTab] = useState<'profile' | 'appearance' | 'integrations'>('profile')
+  const [tab, setTab]             = useState<'profile' | 'appearance' | 'integrations'>('profile')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [titleInput, setTitleInput] = useState('')
+  const [emailInput, setEmailInput] = useState('')
+  const [saved, setSaved]           = useState(false)
   const [calConnected, setCalConnected] = useState<boolean | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (tab !== 'profile') return
+    setTitleInput(myProfile?.title ?? '')
+    setEmailInput(myProfile?.email ?? '')
+  }, [tab, myProfile])
 
   useEffect(() => {
     if (tab !== 'integrations') return
@@ -188,51 +219,65 @@ function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatar
     finally { setUploading(false) }
   }
 
+  function handleSave() {
+    onSaveProfileDetails(emailInput.trim(), titleInput.trim())
+    setSaved(true); setTimeout(() => setSaved(false), 2000)
+  }
+
   async function handleDisconnect() {
     await fetch('/api/auth/google/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) })
     setCalConnected(false)
   }
 
-  const TABS = [
-    { key: 'profile',      label: 'プロフィール' },
-    { key: 'appearance',   label: '外観' },
-    { key: 'integrations', label: '連携' },
-  ] as const
-
+  const TABS = [{ key: 'profile', label: 'プロフィール' }, { key: 'appearance', label: '外観' }, { key: 'integrations', label: '連携' }] as const
   return (
-    <Modal onClose={onClose} title="設定">
+    <Modal onClose={onClose} title="">
       <div className="flex gap-1 mb-5 bg-gray-700/60 rounded-lg p-1">
         {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.key ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-            {t.label}
-          </button>
+          <button key={t.key} onClick={() => setTab(t.key)} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab===t.key?'bg-gray-600 text-white':'text-gray-400 hover:text-white'}`}>{t.label}</button>
         ))}
       </div>
+
       {tab === 'profile' && (
-        <div className="flex flex-col items-center gap-5">
-          <div className="relative">
-            <Avatar username={username} avatarUrl={myAvatarUrl} size={80} />
-            <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="absolute -bottom-1 -right-1 bg-gray-600 hover:bg-gray-500 text-white rounded-full p-1.5 transition-colors disabled:opacity-50" title="アイコンを変更">
-              {uploading ? <SpinnerIcon /> : <CameraIcon />}
-            </button>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        <div className="flex flex-col gap-5">
+          {/* Avatar */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              <Avatar username={username} avatarUrl={myProfile?.avatarUrl} size={72} />
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="absolute -bottom-1 -right-1 bg-gray-600 hover:bg-gray-500 text-white rounded-full p-1.5 transition-colors disabled:opacity-50" title="アイコンを変更">
+                {uploading ? <SpinnerIcon /> : <CameraIcon />}
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+            </div>
+            <p className="text-white font-semibold">{username}</p>
+            {uploadError && <p className="text-red-400 text-xs">{uploadError}</p>}
           </div>
-          <div className="text-center">
-            <p className="text-white font-semibold text-base">{username}</p>
-            <button onClick={() => fileInputRef.current?.click()} className="text-blue-400 hover:text-blue-300 text-sm transition-colors mt-1 block w-full">アイコン画像をアップロード</button>
-            {uploadError && <p className="text-red-400 text-xs mt-1">{uploadError}</p>}
-            <p className="text-gray-500 text-xs mt-2">JPG / PNG / GIF（最大 5MB）</p>
+          {/* Profile details */}
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-gray-400 text-xs mb-1 block">肩書き</label>
+              <input type="text" value={titleInput} onChange={e => setTitleInput(e.target.value)} placeholder="例: フロントエンドエンジニア" className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" maxLength={50} />
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1 block">メールアドレス</label>
+              <input type="email" value={emailInput} onChange={e => setEmailInput(e.target.value)} placeholder="you@example.com" className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" maxLength={100} />
+            </div>
+            <button onClick={handleSave} className="theme-accent-btn text-white py-2 rounded-lg text-sm font-semibold">
+              {saved ? '✓ 保存しました' : '保存'}
+            </button>
           </div>
         </div>
       )}
+
       {tab === 'appearance' && (
         <div className="flex flex-col gap-5">
-          <ColorRow label="サイドバーの色" value={colors.sidebar} defaultValue={DEFAULT_COLORS.sidebar} onChange={v => onColorsChange({ ...colors, sidebar: v })} />
-          <ColorRow label="チャット背景色" value={colors.chat} defaultValue={DEFAULT_COLORS.chat} onChange={v => onColorsChange({ ...colors, chat: v })} />
-          <ColorRow label="アクセントカラー" value={colors.accent} defaultValue={DEFAULT_COLORS.accent} onChange={v => onColorsChange({ ...colors, accent: v })} />
+          <ColorRow label="サイドバーの色" value={colors.sidebar} defaultValue={DEFAULT_COLORS.sidebar} onChange={v => onColorsChange({...colors,sidebar:v})} />
+          <ColorRow label="チャット背景色" value={colors.chat} defaultValue={DEFAULT_COLORS.chat} onChange={v => onColorsChange({...colors,chat:v})} />
+          <ColorRow label="アクセントカラー" value={colors.accent} defaultValue={DEFAULT_COLORS.accent} onChange={v => onColorsChange({...colors,accent:v})} />
           <button onClick={() => onColorsChange(DEFAULT_COLORS)} className="mt-1 py-2 border border-gray-600 text-gray-400 hover:text-white hover:border-gray-400 text-sm rounded-lg transition-colors">すべてデフォルトに戻す</button>
         </div>
       )}
+
       {tab === 'integrations' && (
         <div className="flex flex-col gap-4">
           <div className="bg-gray-700/50 rounded-xl p-4">
@@ -251,17 +296,12 @@ function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatar
               </div>
             )}
             {calConnected === false && (
-              <a
-                href={`/api/auth/google?username=${encodeURIComponent(username)}`}
-                className="block w-full text-center theme-accent-btn py-2 rounded-lg text-sm font-semibold"
-              >
+              <a href={`/api/auth/google?username=${encodeURIComponent(username)}`} className="block w-full text-center theme-accent-btn py-2 rounded-lg text-sm font-semibold">
                 Google アカウントで連携
               </a>
             )}
           </div>
-          <p className="text-gray-500 text-xs">
-            連携には Google Cloud Console での OAuth 設定が必要です。環境変数 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI を設定してください。
-          </p>
+          <p className="text-gray-500 text-xs">環境変数 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI が必要です。</p>
         </div>
       )}
     </Modal>
@@ -278,25 +318,24 @@ export default function ChatPage() {
   const [input, setInput]               = useState('')
   const [attachment, setAttachment]     = useState<Attachment | null>(null)
   const [attachmentLoading, setAttachmentLoading] = useState(false)
-  const [userProfiles, setUserProfiles]   = useState<Record<string, string | null>>({})
-  const [userStatuses, setUserStatuses]   = useState<Record<string, MeetingStatus>>({})
+  const [userProfiles, setUserProfiles] = useState<Record<string, UserProfileData>>({})
+  const [userStatuses, setUserStatuses] = useState<Record<string, MeetingStatus>>({})
   const [showSettings, setShowSettings] = useState(false)
   const [colors, setColors]             = useState<ThemeColors>(DEFAULT_COLORS)
+  const [profileCard, setProfileCard]   = useState<string | null>(null)
+  const [showCalPopup, setShowCalPopup] = useState(false)
 
-  // チャンネル操作モーダル
+  // チャンネル操作
   const [showAddModal, setShowAddModal]       = useState(false)
   const [newChannelName, setNewChannelName]   = useState('')
   const [newChannelPrivate, setNewChannelPrivate] = useState(false)
   const [renameTarget, setRenameTarget]       = useState<Channel | null>(null)
   const [renameInput, setRenameInput]         = useState('')
   const [deleteTarget, setDeleteTarget]       = useState<Channel | null>(null)
-
-  // 招待モーダル
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [inviteChannelId, setInviteChannelId] = useState<number | null>(null)
   const [inviteInput, setInviteInput]         = useState('')
   const [inviteSuccess, setInviteSuccess]     = useState('')
-
   const [errorMsg, setErrorMsg] = useState('')
 
   const socketRef          = useRef<Socket | null>(null)
@@ -304,17 +343,12 @@ export default function ChatPage() {
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const currentChannelIdRef = useRef<number | null>(null)
 
-  // 設定・セッション情報の読み込み
   useEffect(() => {
     const savedName = localStorage.getItem('chat_username')
     if (savedName) { setUsername(savedName); setEnteredName(true) }
-    try {
-      const savedColors = localStorage.getItem('chat_colors')
-      if (savedColors) setColors(JSON.parse(savedColors))
-    } catch {}
+    try { const c = localStorage.getItem('chat_colors'); if (c) setColors(JSON.parse(c)) } catch {}
   }, [])
 
-  // CSS変数の動的注入（テーマカラー）
   useEffect(() => {
     let el = document.getElementById('chat-theme') as HTMLStyleElement | null
     if (!el) { el = document.createElement('style'); el.id = 'chat-theme'; document.head.appendChild(el) }
@@ -323,7 +357,6 @@ export default function ChatPage() {
 
   useEffect(() => { currentChannelIdRef.current = currentChannelId }, [currentChannelId])
 
-  // Socket.io 接続（username を auth で渡す）
   useEffect(() => {
     if (!enteredName) return
     const socket = io({ auth: { username } })
@@ -333,28 +366,22 @@ export default function ChatPage() {
       setChannels(chs)
       setCurrentChannelId(prev => {
         if (prev !== null && !chs.find(c => c.id === prev)) {
-          const first = chs[0]
-          if (first) socket.emit('join_channel', first.id)
-          return first?.id ?? null
+          const first = chs[0]; if (first) socket.emit('join_channel', first.id); return first?.id ?? null
         }
         return prev
       })
     })
-
     socket.on('history', ({ channelId, messages: msgs }: { channelId: number; messages: Message[] }) => {
       setCurrentChannelId(channelId); setMessages(msgs)
     })
-
     socket.on('new_message', (msg: Message) => {
       if (msg.channelId === currentChannelIdRef.current) setMessages(prev => [...prev, msg])
     })
-
-    socket.on('user_profiles', (profiles: Record<string, string | null>) => setUserProfiles(profiles))
+    socket.on('user_profiles', (profiles: Record<string, UserProfileData>) => setUserProfiles(profiles))
     socket.on('user_statuses', (statuses: Record<string, MeetingStatus>) => setUserStatuses(statuses))
     socket.on('channel_error', (msg: string) => setErrorMsg(msg))
     socket.on('invite_success', (invitee: string) => setInviteSuccess(`${invitee} を招待しました`))
 
-    // Google OAuth コールバックから戻ってきた場合
     const params = new URLSearchParams(window.location.search)
     if (params.get('calendar_connected') === '1') {
       socket.emit('calendar_connected')
@@ -376,7 +403,6 @@ export default function ChatPage() {
     const name = username.trim(); if (!name) return
     localStorage.setItem('chat_username', name); setUsername(name); setEnteredName(true)
   }
-
   function handleSend(e: React.FormEvent) {
     e.preventDefault()
     if ((!input.trim() && !attachment) || !socketRef.current || currentChannelId === null) return
@@ -388,70 +414,70 @@ export default function ChatPage() {
     })
     setInput(''); setAttachment(null)
   }
-
   function switchChannel(id: number) {
     if (id === currentChannelId) return
     setMessages([]); socketRef.current?.emit('join_channel', id)
   }
-
   function handleAddChannel(e: React.FormEvent) {
     e.preventDefault(); if (!newChannelName.trim()) return
     setErrorMsg('')
     socketRef.current?.emit('create_channel', { name: newChannelName.trim(), isPrivate: newChannelPrivate })
     setNewChannelName(''); setNewChannelPrivate(false); setShowAddModal(false)
   }
-
   function handleRename(e: React.FormEvent) {
     e.preventDefault(); if (!renameInput.trim() || !renameTarget) return
     setErrorMsg('')
     socketRef.current?.emit('rename_channel', { id: renameTarget.id, name: renameInput.trim() })
     setRenameTarget(null)
   }
-
   function handleDelete() {
     if (!deleteTarget) return
     socketRef.current?.emit('delete_channel', deleteTarget.id); setDeleteTarget(null)
   }
-
   function handleInvite(e: React.FormEvent) {
     e.preventDefault(); if (!inviteInput.trim() || inviteChannelId === null) return
     setErrorMsg(''); setInviteSuccess('')
     socketRef.current?.emit('invite_to_channel', { channelId: inviteChannelId, inviteeUsername: inviteInput.trim() })
     setInviteInput('')
   }
-
   function handleColorsChange(newColors: ThemeColors) {
     setColors(newColors); localStorage.setItem('chat_colors', JSON.stringify(newColors))
   }
-
   async function handleAvatarUpload(file: File) {
     const imageData = await resizeImageToDataUrl(file)
     const res = await fetch('/api/avatar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, imageData }) })
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? 'Upload failed') }
     const { avatarUrl } = await res.json()
-    if (avatarUrl) { setUserProfiles(prev => ({ ...prev, [username]: avatarUrl })); socketRef.current?.emit('update_profile') }
+    if (avatarUrl) {
+      setUserProfiles(prev => ({ ...prev, [username]: { ...(prev[username] ?? { email: null, title: null }), avatarUrl } }))
+      socketRef.current?.emit('update_profile')
+    }
   }
-
+  function handleSaveProfileDetails(email: string, title: string) {
+    socketRef.current?.emit('update_profile_details', { email, title })
+    setUserProfiles(prev => ({
+      ...prev,
+      [username]: { ...(prev[username] ?? { avatarUrl: null }), email: email || null, title: title || null }
+    }))
+  }
   async function handleAttachmentSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return
-    e.target.value = ''
+    const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
     setAttachmentLoading(true); setErrorMsg('')
     try {
       if (file.type.startsWith('image/')) {
-        if (file.size > 10 * 1024 * 1024) { setErrorMsg('画像は10MB以下にしてください'); return }
-        const data = await resizeAttachmentImage(file)
-        setAttachment({ data, name: file.name, type: 'image/jpeg' })
+        if (file.size > 10*1024*1024) { setErrorMsg('画像は10MB以下にしてください'); return }
+        setAttachment({ data: await resizeAttachmentImage(file), name: file.name, type: 'image/jpeg' })
       } else {
-        if (file.size > 1024 * 1024) { setErrorMsg('ファイルは1MB以下にしてください'); return }
-        const data = await fileToDataUrl(file)
-        setAttachment({ data, name: file.name, type: file.type })
+        if (file.size > 1024*1024) { setErrorMsg('ファイルは1MB以下にしてください'); return }
+        setAttachment({ data: await fileToDataUrl(file), name: file.name, type: file.type })
       }
     } catch { setErrorMsg('ファイルの処理に失敗しました') }
     finally { setAttachmentLoading(false) }
   }
 
   const currentChannel = channels.find(c => c.id === currentChannelId)
-  const myAvatarUrl    = userProfiles[username]
+  const myAvatarUrl    = userProfiles[username]?.avatarUrl
+  const myProfile      = userProfiles[username]
   const myStatus       = userStatuses[username]
 
   // ---- Login Screen ----
@@ -478,7 +504,6 @@ export default function ChatPage() {
           <span className="text-xs font-semibold uppercase tracking-wider theme-sidebar-muted">チャンネル</span>
           <button onClick={() => { setShowAddModal(true); setNewChannelName(''); setNewChannelPrivate(false); setErrorMsg('') }} className="sidebar-icon-btn" title="チャンネルを追加"><PlusIcon /></button>
         </div>
-
         <nav className="flex-1 overflow-y-auto py-2">
           {channels.map(ch => (
             <ChannelItem key={ch.id} channel={ch} isActive={ch.id === currentChannelId}
@@ -490,12 +515,18 @@ export default function ChatPage() {
           ))}
           {channels.length === 0 && <p className="text-xs px-4 py-2 theme-sidebar-muted">チャンネルがありません</p>}
         </nav>
-
+        {/* User footer */}
         <div className="border-t border-white/10 px-3 py-2.5 flex items-center gap-2">
           <div className="relative shrink-0">
-            <Avatar username={username} avatarUrl={myAvatarUrl} size={32} />
+            <button onClick={() => setProfileCard(username)} className="block rounded-full focus:outline-none" title="プロフィールを見る">
+              <Avatar username={username} avatarUrl={myAvatarUrl} size={32} />
+            </button>
             {myStatus?.inMeeting && (
-              <span className="absolute -top-1 -right-1 text-xs leading-none" title={`In a meeting ～${formatTime(myStatus.endTime)}`}>🗓️</span>
+              <button
+                className="absolute -top-1 -right-1 text-xs leading-none cursor-pointer hover:scale-125 transition-transform"
+                onClick={() => setShowCalPopup(v => !v)}
+                title="予定の詳細を見る"
+              >🗓️</button>
             )}
           </div>
           <div className="flex-1 min-w-0">
@@ -518,18 +549,14 @@ export default function ChatPage() {
               {currentChannel.isPrivate && (
                 <>
                   <span className="text-gray-500 text-xs ml-1">{currentChannel.members.length}人のメンバー</span>
-                  <button
-                    onClick={() => { setInviteChannelId(currentChannel.id); setShowInviteModal(true); setInviteInput(''); setInviteSuccess(''); setErrorMsg('') }}
-                    className="ml-1 text-xs text-blue-400 hover:text-blue-300 px-2 py-0.5 border border-blue-400/40 rounded-full transition-colors"
-                  >
+                  <button onClick={() => { setInviteChannelId(currentChannel.id); setShowInviteModal(true); setInviteInput(''); setInviteSuccess(''); setErrorMsg('') }}
+                    className="ml-1 text-xs text-blue-400 hover:text-blue-300 px-2 py-0.5 border border-blue-400/40 rounded-full transition-colors">
                     + 招待
                   </button>
                 </>
               )}
             </>
-          ) : (
-            <span className="text-gray-400">チャンネルを選択してください</span>
-          )}
+          ) : <span className="text-gray-400">チャンネルを選択してください</span>}
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
@@ -537,24 +564,32 @@ export default function ChatPage() {
             <p className="text-center mt-10 theme-chat-muted">#{currentChannel.name} にメッセージがまだありません</p>
           )}
           {messages.map(msg => {
-            const isMe = msg.username === username
-            const avatarUrl = userProfiles[msg.username]
+            const isMe      = msg.username === username
+            const avatarUrl = userProfiles[msg.username]?.avatarUrl
+            const msgStatus = userStatuses[msg.username]
             return (
               <div key={msg.id} className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                {/* Other user avatar — clickable */}
                 {!isMe && (
                   <div className="relative shrink-0">
-                    <Avatar username={msg.username} avatarUrl={avatarUrl} size={32} />
-                    {userStatuses[msg.username]?.inMeeting && (
-                      <span className="absolute -top-1 -right-1 text-xs leading-none" title={`In a meeting ～${formatTime(userStatuses[msg.username].endTime)}`}>🗓️</span>
+                    <button onClick={() => setProfileCard(msg.username)} className="block rounded-full focus:outline-none" title={`${msg.username} のプロフィール`}>
+                      <Avatar username={msg.username} avatarUrl={avatarUrl} size={32} />
+                    </button>
+                    {msgStatus?.inMeeting && (
+                      <span className="absolute -top-1 -right-1 text-xs leading-none pointer-events-none">🗓️</span>
                     )}
                   </div>
                 )}
+
                 <div className={`max-w-xs lg:max-w-md flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                  {/* Username + meeting status */}
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1 ml-1 flex-wrap">
-                      <span className="text-xs theme-chat-muted">{msg.username}</span>
-                      {userStatuses[msg.username]?.inMeeting && (
-                        <span className="text-xs text-blue-400">🗓️ In a meeting ～{formatTime(userStatuses[msg.username].endTime)}</span>
+                      <button onClick={() => setProfileCard(msg.username)} className="text-xs theme-chat-muted hover:underline focus:outline-none">
+                        {msg.username}
+                      </button>
+                      {msgStatus?.inMeeting && (
+                        <span className="text-xs text-blue-400">🗓️ In a meeting ～{formatTime(msgStatus.endTime)}</span>
                       )}
                     </div>
                   )}
@@ -564,11 +599,10 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.attachmentData && (
-                    <div className={`mt-1 ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+                    <div className={`mt-1 flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                       {msg.attachmentType?.startsWith('image/') ? (
                         <img src={msg.attachmentData} alt={msg.attachmentName ?? 'image'} className="max-w-xs max-h-64 rounded-xl object-contain cursor-pointer" loading="lazy"
-                          onClick={() => { const a = document.createElement('a'); a.href = msg.attachmentData!; a.download = msg.attachmentName ?? 'image'; a.click() }}
-                        />
+                          onClick={() => { const a = document.createElement('a'); a.href = msg.attachmentData!; a.download = msg.attachmentName??'image'; a.click() }} />
                       ) : (
                         <a href={msg.attachmentData} download={msg.attachmentName} className="flex items-center gap-2 bg-gray-700/70 hover:bg-gray-700 px-3 py-2 rounded-xl text-sm text-gray-300 transition-colors max-w-xs">
                           <FileIcon /><span className="truncate">{msg.attachmentName}</span>
@@ -580,7 +614,18 @@ export default function ChatPage() {
                     {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
-                {isMe && <Avatar username={msg.username} avatarUrl={myAvatarUrl} size={32} />}
+
+                {/* My avatar — clickable */}
+                {isMe && (
+                  <div className="relative shrink-0">
+                    <button onClick={() => setProfileCard(msg.username)} className="block rounded-full focus:outline-none" title="自分のプロフィール">
+                      <Avatar username={msg.username} avatarUrl={myAvatarUrl} size={32} />
+                    </button>
+                    {myStatus?.inMeeting && (
+                      <span className="absolute -top-1 -right-1 text-xs leading-none pointer-events-none">🗓️</span>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -589,7 +634,6 @@ export default function ChatPage() {
 
         {/* Input area */}
         <form onSubmit={handleSend} className="bg-gray-800/90 backdrop-blur border-t border-white/10">
-          {/* Attachment preview */}
           {attachment && (
             <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10">
               {attachment.type.startsWith('image/') ? (
@@ -604,13 +648,7 @@ export default function ChatPage() {
           )}
           {errorMsg && <p className="px-4 py-1 text-red-400 text-xs">{errorMsg}</p>}
           <div className="flex gap-2 px-4 py-3">
-            <button
-              type="button"
-              onClick={() => attachmentInputRef.current?.click()}
-              disabled={!currentChannel || attachmentLoading}
-              className="text-gray-400 hover:text-white transition-colors p-1 disabled:opacity-40"
-              title="ファイルを添付"
-            >
+            <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!currentChannel || attachmentLoading} className="text-gray-400 hover:text-white transition-colors p-1 disabled:opacity-40" title="ファイルを添付">
               {attachmentLoading ? <SpinnerIcon /> : <PaperclipIcon />}
             </button>
             <input ref={attachmentInputRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt,.zip,.csv,.xls,.xlsx" className="hidden" onChange={handleAttachmentSelect} />
@@ -618,22 +656,46 @@ export default function ChatPage() {
               placeholder={currentChannel ? `#${currentChannel.name} にメッセージを送信` : 'チャンネルを選択してください'}
               disabled={!currentChannel}
               className="flex-1 bg-gray-700 text-white rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
-              maxLength={500}
-            />
+              maxLength={500} />
             <button type="submit" disabled={(!input.trim() && !attachment) || !currentChannel} className="theme-accent-btn text-white rounded-full px-5 py-2 font-semibold text-sm">送信</button>
           </div>
         </form>
       </div>
 
-      {/* ---- Modals ---- */}
+      {/* ---- Calendar popup (sidebar badge click) ---- */}
+      {showCalPopup && myStatus?.inMeeting && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowCalPopup(false)} />
+          <div className="fixed bottom-16 left-2 z-50 w-64 bg-gray-800 border border-gray-700 rounded-xl p-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white text-sm font-semibold">🗓️ 現在の予定</span>
+              <button onClick={() => setShowCalPopup(false)} className="text-gray-400 hover:text-white transition-colors"><XIcon /></button>
+            </div>
+            <p className="text-gray-100 text-sm font-medium leading-snug">{myStatus.eventTitle || '（タイトルなし）'}</p>
+            <p className="text-gray-400 text-xs mt-2">終了: {formatTime(myStatus.endTime)}</p>
+          </div>
+        </>
+      )}
+
+      {/* ---- Profile card ---- */}
+      {profileCard && (
+        <ProfileCard
+          username={profileCard}
+          profile={userProfiles[profileCard]}
+          status={userStatuses[profileCard]}
+          onClose={() => setProfileCard(null)}
+        />
+      )}
+
+      {/* ---- Channel modals ---- */}
       {showAddModal && (
         <Modal onClose={() => setShowAddModal(false)} title="チャンネルを追加">
           <form onSubmit={handleAddChannel} className="flex flex-col gap-4">
             <input type="text" value={newChannelName} onChange={e => setNewChannelName(e.target.value)} placeholder="チャンネル名" className="bg-gray-700 text-white rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm" maxLength={50} autoFocus />
             <div className="flex gap-2">
-              {([{ label: '🌐 パブリック', value: false }, { label: '🔒 プライベート', value: true }] as const).map(opt => (
+              {([{label:'🌐 パブリック',value:false},{label:'🔒 プライベート',value:true}] as const).map(opt => (
                 <button key={String(opt.value)} type="button" onClick={() => setNewChannelPrivate(opt.value)}
-                  className={`flex-1 py-2 text-sm rounded-lg border transition-colors ${newChannelPrivate === opt.value ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-gray-600 text-gray-400 hover:border-gray-400'}`}>
+                  className={`flex-1 py-2 text-sm rounded-lg border transition-colors ${newChannelPrivate===opt.value?'border-blue-500 text-blue-400 bg-blue-500/10':'border-gray-600 text-gray-400 hover:border-gray-400'}`}>
                   {opt.label}
                 </button>
               ))}
@@ -655,7 +717,7 @@ export default function ChatPage() {
             {errorMsg && <p className="text-red-400 text-xs">{errorMsg}</p>}
             <div className="flex gap-2 justify-end">
               <button type="button" onClick={() => setRenameTarget(null)} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">キャンセル</button>
-              <button type="submit" disabled={!renameInput.trim() || renameInput === renameTarget.name} className="theme-accent-btn text-white px-4 py-2 rounded-lg text-sm font-semibold">変更</button>
+              <button type="submit" disabled={!renameInput.trim() || renameInput===renameTarget.name} className="theme-accent-btn text-white px-4 py-2 rounded-lg text-sm font-semibold">変更</button>
             </div>
           </form>
         </Modal>
@@ -693,7 +755,15 @@ export default function ChatPage() {
       )}
 
       {showSettings && (
-        <SettingsModal username={username} myAvatarUrl={myAvatarUrl} colors={colors} onColorsChange={handleColorsChange} onAvatarUpload={handleAvatarUpload} onClose={() => setShowSettings(false)} />
+        <SettingsModal
+          username={username}
+          myProfile={myProfile}
+          colors={colors}
+          onColorsChange={handleColorsChange}
+          onAvatarUpload={handleAvatarUpload}
+          onSaveProfileDetails={handleSaveProfileDetails}
+          onClose={() => setShowSettings(false)}
+        />
       )}
     </div>
   )
