@@ -44,3 +44,12 @@ model UserProfile {
   avatarUrl String?
   updatedAt DateTime @updatedAt
 }
+
+model UserCalendar {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  updatedAt    DateTime @updatedAt
+}

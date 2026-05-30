@@ -13,6 +13,52 @@ function getDbPath(): string {
 
 const prisma = new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: getDbPath() }) } as never)
 
+// ---- Google Calendar ----
+type CalRecord = { username: string; accessToken: string; refreshToken: string; expiresAt: Date }
+type MeetingStatus = { inMeeting: boolean; eventTitle: string; endTime: string }
+let cachedStatuses: Record<string, MeetingStatus> = {}
+
+async function getValidAccessToken(cal: CalRecord): Promise<string> {
+  if (cal.expiresAt > new Date()) return cal.accessToken
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     process.env.GOOGLE_CLIENT_ID ?? '',
+      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      refresh_token: cal.refreshToken,
+      grant_type:    'refresh_token',
+    }),
+  })
+  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`)
+  const t = await res.json()
+  await prisma.userCalendar.update({
+    where: { username: cal.username },
+    data: { accessToken: t.access_token, expiresAt: new Date(Date.now() + t.expires_in * 1000) },
+  })
+  return t.access_token
+}
+
+async function fetchMeetingStatus(cal: CalRecord): Promise<MeetingStatus> {
+  const token = await getValidAccessToken(cal)
+  const now   = new Date()
+  const url   = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
+  url.searchParams.set('timeMin',       new Date(now.getTime() - 8 * 3600_000).toISOString())
+  url.searchParams.set('timeMax',       new Date(now.getTime() +      60_000).toISOString())
+  url.searchParams.set('singleEvents',  'true')
+  url.searchParams.set('orderBy',       'startTime')
+  url.searchParams.set('maxResults',    '10')
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`Calendar API error: ${res.status}`)
+  const data   = await res.json()
+  const active = (data.items ?? []).find((ev: any) => {
+    if (!ev.start?.dateTime) return false
+    return new Date(ev.start.dateTime) <= now && new Date(ev.end.dateTime) >= now
+  })
+  if (!active) return { inMeeting: false, eventTitle: '', endTime: '' }
+  return { inMeeting: true, eventTitle: active.summary ?? '予定あり', endTime: active.end.dateTime }
+}
+
 const DEFAULT_CHANNELS = ['general', '経理・事務', 'odori-fit', '潜在美学-yt']
 
 const dev = process.env.NODE_ENV !== 'production'
@@ -41,6 +87,30 @@ app.prepare().then(async () => {
 
   const httpServer = createServer(handle)
   const io = new Server(httpServer)
+
+  // 5分ごとにカレンダーステータスを取得してブロードキャスト
+  async function refreshCalendarStatuses() {
+    if (!process.env.GOOGLE_CLIENT_ID) return
+    const calendars = await prisma.userCalendar.findMany()
+    const next: Record<string, MeetingStatus> = {}
+    for (const cal of calendars) {
+      try {
+        next[cal.username] = await fetchMeetingStatus(cal as CalRecord)
+      } catch (err: any) {
+        console.error(`Calendar fetch failed for ${cal.username}:`, err?.message)
+        if (String(err?.message).includes('401')) {
+          await prisma.userCalendar.deleteMany({ where: { username: cal.username } }).catch(() => {})
+        }
+      }
+    }
+    cachedStatuses = next
+    io.emit('user_statuses', cachedStatuses)
+  }
+
+  if (process.env.GOOGLE_CLIENT_ID) {
+    setTimeout(() => refreshCalendarStatuses(), 5_000)
+    setInterval(() => refreshCalendarStatuses(), 5 * 60_000)
+  }
 
   // 各ソケットにパーソナライズされたチャンネル一覧を送信
   async function broadcastChannels() {
@@ -80,6 +150,12 @@ app.prepare().then(async () => {
 
   io.on('connection', async (socket) => {
     const username = (socket.handshake.auth as { username?: string }).username ?? ''
+
+    // 接続時: カレンダーステータス（キャッシュ済み）を送信
+    socket.emit('user_statuses', cachedStatuses)
+
+    // OAuth コールバック後にクライアントから通知 → 即時リフレッシュ
+    socket.on('calendar_connected', () => refreshCalendarStatuses())
 
     // 初回: チャンネル一覧・プロフィール・最初のチャンネル履歴
     const channels = await getChannelsForUser(username)

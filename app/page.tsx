@@ -15,6 +15,7 @@ interface Message {
 }
 interface Attachment { data: string; name: string; type: string }
 interface ThemeColors { sidebar: string; chat: string; accent: string }
+interface MeetingStatus { inMeeting: boolean; eventTitle: string; endTime: string }
 
 // ---- Constants ----
 const DEFAULT_COLORS: ThemeColors = { sidebar: '#1f2937', chat: '#111827', accent: '#2563eb' }
@@ -45,6 +46,11 @@ function buildThemeVars(colors: ThemeColors): string {
     `--msg-bubble-bg:${cLum > 0.179 ? '#e5e7eb' : '#374151'};` +
     `--msg-bubble-text:${cLum > 0.179 ? '#111827' : '#f3f4f6'};`
   )
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 }
 
 // Canvas でリサイズ（アバター用: center-crop → 128px 正方形）
@@ -163,10 +169,17 @@ function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatar
   colors: ThemeColors; onColorsChange: (c: ThemeColors) => void
   onAvatarUpload: (file: File) => Promise<void>; onClose: () => void
 }) {
-  const [tab, setTab] = useState<'profile' | 'appearance'>('profile')
+  const [tab, setTab] = useState<'profile' | 'appearance' | 'integrations'>('profile')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [calConnected, setCalConnected] = useState<boolean | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (tab !== 'integrations') return
+    fetch(`/api/auth/google/status?username=${encodeURIComponent(username)}`)
+      .then(r => r.json()).then(d => setCalConnected(d.connected)).catch(() => setCalConnected(false))
+  }, [tab, username])
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
@@ -175,12 +188,23 @@ function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatar
     finally { setUploading(false) }
   }
 
+  async function handleDisconnect() {
+    await fetch('/api/auth/google/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) })
+    setCalConnected(false)
+  }
+
+  const TABS = [
+    { key: 'profile',      label: 'プロフィール' },
+    { key: 'appearance',   label: '外観' },
+    { key: 'integrations', label: '連携' },
+  ] as const
+
   return (
     <Modal onClose={onClose} title="設定">
       <div className="flex gap-1 mb-5 bg-gray-700/60 rounded-lg p-1">
-        {(['profile', 'appearance'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-            {t === 'profile' ? 'プロフィール' : '外観'}
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === t.key ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+            {t.label}
           </button>
         ))}
       </div>
@@ -209,6 +233,37 @@ function SettingsModal({ username, myAvatarUrl, colors, onColorsChange, onAvatar
           <button onClick={() => onColorsChange(DEFAULT_COLORS)} className="mt-1 py-2 border border-gray-600 text-gray-400 hover:text-white hover:border-gray-400 text-sm rounded-lg transition-colors">すべてデフォルトに戻す</button>
         </div>
       )}
+      {tab === 'integrations' && (
+        <div className="flex flex-col gap-4">
+          <div className="bg-gray-700/50 rounded-xl p-4">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-2xl">🗓️</span>
+              <div>
+                <p className="text-white font-medium text-sm">Google Calendar</p>
+                <p className="text-gray-400 text-xs">ミーティング中のステータスを自動表示（5分ごと更新）</p>
+              </div>
+            </div>
+            {calConnected === null && <p className="text-gray-400 text-sm">確認中...</p>}
+            {calConnected === true && (
+              <div className="flex items-center justify-between">
+                <span className="text-green-400 text-sm">✓ 連携済み</span>
+                <button onClick={handleDisconnect} className="text-red-400 hover:text-red-300 text-sm transition-colors">連携を解除</button>
+              </div>
+            )}
+            {calConnected === false && (
+              <a
+                href={`/api/auth/google?username=${encodeURIComponent(username)}`}
+                className="block w-full text-center theme-accent-btn py-2 rounded-lg text-sm font-semibold"
+              >
+                Google アカウントで連携
+              </a>
+            )}
+          </div>
+          <p className="text-gray-500 text-xs">
+            連携には Google Cloud Console での OAuth 設定が必要です。環境変数 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI を設定してください。
+          </p>
+        </div>
+      )}
     </Modal>
   )
 }
@@ -223,7 +278,8 @@ export default function ChatPage() {
   const [input, setInput]               = useState('')
   const [attachment, setAttachment]     = useState<Attachment | null>(null)
   const [attachmentLoading, setAttachmentLoading] = useState(false)
-  const [userProfiles, setUserProfiles] = useState<Record<string, string | null>>({})
+  const [userProfiles, setUserProfiles]   = useState<Record<string, string | null>>({})
+  const [userStatuses, setUserStatuses]   = useState<Record<string, MeetingStatus>>({})
   const [showSettings, setShowSettings] = useState(false)
   const [colors, setColors]             = useState<ThemeColors>(DEFAULT_COLORS)
 
@@ -294,8 +350,20 @@ export default function ChatPage() {
     })
 
     socket.on('user_profiles', (profiles: Record<string, string | null>) => setUserProfiles(profiles))
+    socket.on('user_statuses', (statuses: Record<string, MeetingStatus>) => setUserStatuses(statuses))
     socket.on('channel_error', (msg: string) => setErrorMsg(msg))
     socket.on('invite_success', (invitee: string) => setInviteSuccess(`${invitee} を招待しました`))
+
+    // Google OAuth コールバックから戻ってきた場合
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('calendar_connected') === '1') {
+      socket.emit('calendar_connected')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    if (params.get('calendar_error') === '1') {
+      setErrorMsg('Google Calendar の連携に失敗しました')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
 
     return () => { socket.disconnect() }
   }, [enteredName, username])
@@ -384,6 +452,7 @@ export default function ChatPage() {
 
   const currentChannel = channels.find(c => c.id === currentChannelId)
   const myAvatarUrl    = userProfiles[username]
+  const myStatus       = userStatuses[username]
 
   // ---- Login Screen ----
   if (!enteredName) {
@@ -423,8 +492,18 @@ export default function ChatPage() {
         </nav>
 
         <div className="border-t border-white/10 px-3 py-2.5 flex items-center gap-2">
-          <Avatar username={username} avatarUrl={myAvatarUrl} size={32} />
-          <span className="flex-1 text-sm font-medium truncate">{username}</span>
+          <div className="relative shrink-0">
+            <Avatar username={username} avatarUrl={myAvatarUrl} size={32} />
+            {myStatus?.inMeeting && (
+              <span className="absolute -top-1 -right-1 text-xs leading-none" title={`In a meeting ～${formatTime(myStatus.endTime)}`}>🗓️</span>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium truncate">{username}</p>
+            {myStatus?.inMeeting && (
+              <p className="text-xs theme-sidebar-muted truncate">In a meeting ～{formatTime(myStatus.endTime)}</p>
+            )}
+          </div>
           <button onClick={() => setShowSettings(true)} className="sidebar-icon-btn p-1" title="設定"><GearIcon /></button>
         </div>
       </aside>
@@ -462,9 +541,23 @@ export default function ChatPage() {
             const avatarUrl = userProfiles[msg.username]
             return (
               <div key={msg.id} className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                {!isMe && <Avatar username={msg.username} avatarUrl={avatarUrl} size={32} />}
+                {!isMe && (
+                  <div className="relative shrink-0">
+                    <Avatar username={msg.username} avatarUrl={avatarUrl} size={32} />
+                    {userStatuses[msg.username]?.inMeeting && (
+                      <span className="absolute -top-1 -right-1 text-xs leading-none" title={`In a meeting ～${formatTime(userStatuses[msg.username].endTime)}`}>🗓️</span>
+                    )}
+                  </div>
+                )}
                 <div className={`max-w-xs lg:max-w-md flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                  {!isMe && <span className="text-xs mb-1 ml-1 theme-chat-muted">{msg.username}</span>}
+                  {!isMe && (
+                    <div className="flex items-center gap-1.5 mb-1 ml-1 flex-wrap">
+                      <span className="text-xs theme-chat-muted">{msg.username}</span>
+                      {userStatuses[msg.username]?.inMeeting && (
+                        <span className="text-xs text-blue-400">🗓️ In a meeting ～{formatTime(userStatuses[msg.username].endTime)}</span>
+                      )}
+                    </div>
+                  )}
                   {(msg.content || !msg.attachmentData) && (
                     <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'theme-msg-self rounded-tr-none' : 'theme-msg-other rounded-tl-none'}`}>
                       {msg.content || '(添付ファイル)'}
