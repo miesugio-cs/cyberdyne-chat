@@ -224,6 +224,8 @@ app.prepare().then(async () => {
   })
 
   const io = new Server(httpServer)
+  const connectedUsers = new Map<string, number>() // username → tab count
+  function broadcastOnlineUsers() { io.emit('online_users', Array.from(connectedUsers.keys())) }
 
   async function refreshCalendarStatuses() {
     if (!process.env.GOOGLE_CLIENT_ID) return
@@ -283,7 +285,19 @@ app.prepare().then(async () => {
   io.on('connection', async (socket) => {
     const username = (socket.handshake.auth as { username?: string }).username ?? ''
 
+    if (username) {
+      connectedUsers.set(username, (connectedUsers.get(username) ?? 0) + 1)
+      broadcastOnlineUsers()
+    }
+    socket.on('disconnect', () => {
+      if (!username) return
+      const n = (connectedUsers.get(username) ?? 1) - 1
+      if (n <= 0) connectedUsers.delete(username); else connectedUsers.set(username, n)
+      broadcastOnlineUsers()
+    })
+
     socket.emit('user_statuses', cachedStatuses)
+    socket.emit('online_users', Array.from(connectedUsers.keys()))
     socket.on('calendar_connected', () => refreshCalendarStatuses())
 
     const channels = await getChannelsForUser(username)

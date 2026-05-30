@@ -17,9 +17,20 @@ interface UserProfileData { avatarUrl: string | null; email: string | null; titl
 interface Attachment { data: string; name: string; type: string }
 interface ThemeColors { sidebar: string; chat: string; accent: string }
 interface MeetingStatus { inMeeting: boolean; eventTitle: string; endTime: string }
+interface NotifSettings {
+  enabled: boolean; sound: boolean; soundType: string; badge: boolean; trigger: 'mention' | 'all'
+}
 
 // ---- Constants ----
 const DEFAULT_COLORS: ThemeColors = { sidebar: '#1f2937', chat: '#111827', accent: '#2563eb' }
+const DEFAULT_NOTIF: NotifSettings = { enabled: true, sound: true, soundType: 'pop', badge: true, trigger: 'mention' }
+const SOUNDS = [
+  { key: 'pop',    label: 'ポップ' },
+  { key: 'chime',  label: 'チャイム' },
+  { key: 'beep',   label: 'ビープ' },
+  { key: 'ding',   label: 'ティーン' },
+  { key: 'gentle', label: 'やさしい' },
+]
 
 // ---- Utilities ----
 function avatarBgColor(username: string): string {
@@ -79,6 +90,38 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = reject; reader.readAsDataURL(file)
   })
 }
+function playNotifSound(type: string) {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const osc = ctx.createOscillator(), gain = ctx.createGain()
+    osc.connect(gain); gain.connect(ctx.destination)
+    const t = ctx.currentTime
+    switch (type) {
+      case 'pop':
+        osc.type = 'sine'; osc.frequency.value = 880
+        gain.gain.setValueAtTime(0.3, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
+        osc.start(t); osc.stop(t + 0.12); break
+      case 'chime':
+        osc.type = 'sine'; osc.frequency.value = 1047
+        gain.gain.setValueAtTime(0.25, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6)
+        osc.start(t); osc.stop(t + 0.6); break
+      case 'beep':
+        osc.type = 'square'; osc.frequency.value = 440
+        gain.gain.setValueAtTime(0.08, t); gain.gain.setValueAtTime(0.08, t + 0.1); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15)
+        osc.start(t); osc.stop(t + 0.15); break
+      case 'ding':
+        osc.type = 'sine'; osc.frequency.value = 1500
+        gain.gain.setValueAtTime(0.2, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35)
+        osc.start(t); osc.stop(t + 0.35); break
+      case 'gentle':
+        osc.type = 'sine'; osc.frequency.value = 523
+        gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.15, t + 0.05)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
+        osc.start(t); osc.stop(t + 0.9); break
+    }
+    setTimeout(() => ctx.close(), 1200)
+  } catch {}
+}
 
 // ---- Icons ----
 function HashIcon()     { return <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6.5 1.5l-1 13M10.5 1.5l-1 13M2 5.5h12M1.5 10.5h12"/></svg> }
@@ -93,6 +136,8 @@ function SpinnerIcon()  { return <svg className="w-3.5 h-3.5 animate-spin" viewB
 function PaperclipIcon({ className }: { className?: string }) { return <svg className={`w-4 h-4 ${className??''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 7.5l-6 6a3.5 3.5 0 0 1-5-5l7-7a2 2 0 0 1 3 3l-7 7a.5.5 0 0 1-1-1l6-6"/></svg> }
 function XIcon()        { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg> }
 function FileIcon()     { return <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 1H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6L9 1z"/><path d="M9 1v5h5"/></svg> }
+function PeopleIcon()   { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-3 2-4.5 5-4.5s5 1.5 5 4.5"/><circle cx="12" cy="5" r="2"/><path d="M15 13.5c0-2-1.5-3-3-3"/></svg> }
+function BellIcon()     { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.5A4.5 4.5 0 0 1 12.5 6v3l1 2h-11l1-2V6A4.5 4.5 0 0 1 8 1.5z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg> }
 
 // ---- Base components ----
 function Avatar({ username, avatarUrl, size = 32 }: { username: string; avatarUrl?: string | null; size?: number }) {
@@ -142,6 +187,64 @@ function ProfileCard({ username, profile, status, onClose }: {
   )
 }
 
+// ---- Toggle ----
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => onChange(!checked)} className={`relative w-10 h-5 rounded-full transition-colors ${checked ? 'bg-blue-500' : 'bg-gray-600'}`}>
+      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
+    </button>
+  )
+}
+
+// ---- Members Panel ----
+function MembersPanel({ channel, onlineUsers, allUsers, userProfiles, userStatuses, onAvatarClick }: {
+  channel: Channel | undefined
+  onlineUsers: string[]
+  allUsers: string[]
+  userProfiles: Record<string, UserProfileData>
+  userStatuses: Record<string, MeetingStatus>
+  onAvatarClick: (username: string) => void
+}) {
+  const onlineSet = new Set(onlineUsers)
+  const members = channel?.isPrivate
+    ? channel.members.map(m => ({ username: m.username, online: onlineSet.has(m.username) }))
+    : [...new Set([...onlineUsers, ...allUsers])].map(u => ({ username: u, online: onlineSet.has(u) }))
+  const sorted = [...members].sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1
+    return a.username.localeCompare(b.username)
+  })
+  return (
+    <aside className="theme-sidebar w-48 shrink-0 border-l border-white/10 flex flex-col">
+      <div className="px-3 py-3 border-b border-white/10 flex items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wider theme-sidebar-muted flex-1">メンバー</span>
+        <span className="text-xs theme-sidebar-muted">{members.length}</span>
+      </div>
+      <div className="flex-1 overflow-y-auto py-2 space-y-0.5">
+        {sorted.map(({ username, online }) => {
+          const profile = userProfiles[username]
+          const status  = userStatuses[username]
+          return (
+            <div key={username} className="flex items-center gap-2 px-3 py-1.5">
+              <div className="relative shrink-0">
+                <button onClick={() => onAvatarClick(username)} className="block rounded-full focus:outline-none">
+                  <Avatar username={username} avatarUrl={profile?.avatarUrl} size={28} />
+                </button>
+                <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-gray-900 ${online ? 'bg-green-400' : 'bg-gray-500'}`} />
+                {status?.inMeeting && <span className="absolute -top-1 -right-1 text-xs leading-none pointer-events-none">🗓️</span>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className={`text-xs font-medium truncate ${online ? '' : 'opacity-50'}`}>{username}</p>
+                {status?.inMeeting && <p className="text-xs text-blue-400 truncate">～{formatTime(status.endTime)}</p>}
+              </div>
+            </div>
+          )
+        })}
+        {sorted.length === 0 && <p className="text-xs px-3 py-2 theme-sidebar-muted">メンバーなし</p>}
+      </div>
+    </aside>
+  )
+}
+
 // ---- Channel list item ----
 function ChannelItem({ channel, isActive, onClick, onRename, onDelete, onInvite }: {
   channel: Channel; isActive: boolean
@@ -184,14 +287,15 @@ function ColorRow({ label, value, defaultValue, onChange }: { label: string; val
 }
 
 // ---- Settings Modal ----
-function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUpload, onSaveProfileDetails, onClose }: {
+function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUpload, onSaveProfileDetails, notifSettings, onNotifSettingsChange, onClose }: {
   username: string; myProfile: UserProfileData | undefined
   colors: ThemeColors; onColorsChange: (c: ThemeColors) => void
   onAvatarUpload: (file: File) => Promise<void>
   onSaveProfileDetails: (email: string, title: string) => void
+  notifSettings: NotifSettings; onNotifSettingsChange: (s: NotifSettings) => void
   onClose: () => void
 }) {
-  const [tab, setTab]             = useState<'profile' | 'appearance' | 'integrations'>('profile')
+  const [tab, setTab]             = useState<'profile' | 'appearance' | 'integrations' | 'notifications'>('profile')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [titleInput, setTitleInput] = useState('')
@@ -229,7 +333,7 @@ function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUp
     setCalConnected(false)
   }
 
-  const TABS = [{ key: 'profile', label: 'プロフィール' }, { key: 'appearance', label: '外観' }, { key: 'integrations', label: '連携' }] as const
+  const TABS = [{ key: 'profile', label: 'プロフィール' }, { key: 'appearance', label: '外観' }, { key: 'notifications', label: '通知' }, { key: 'integrations', label: '連携' }] as const
   return (
     <Modal onClose={onClose} title="">
       <div className="flex gap-1 mb-5 bg-gray-700/60 rounded-lg p-1">
@@ -275,6 +379,64 @@ function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUp
           <ColorRow label="チャット背景色" value={colors.chat} defaultValue={DEFAULT_COLORS.chat} onChange={v => onColorsChange({...colors,chat:v})} />
           <ColorRow label="アクセントカラー" value={colors.accent} defaultValue={DEFAULT_COLORS.accent} onChange={v => onColorsChange({...colors,accent:v})} />
           <button onClick={() => onColorsChange(DEFAULT_COLORS)} className="mt-1 py-2 border border-gray-600 text-gray-400 hover:text-white hover:border-gray-400 text-sm rounded-lg transition-colors">すべてデフォルトに戻す</button>
+        </div>
+      )}
+
+      {tab === 'notifications' && (
+        <div className="flex flex-col gap-4">
+          {/* Master toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-200 text-sm font-medium">ブラウザ通知</p>
+              <p className="text-gray-500 text-xs mt-0.5">タブがバックグラウンドのときに通知</p>
+            </div>
+            <Toggle checked={notifSettings.enabled} onChange={v => {
+              if (v && typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission()
+              onNotifSettingsChange({...notifSettings, enabled: v})
+            }} />
+          </div>
+          {/* Trigger */}
+          <div className="flex flex-col gap-2">
+            <p className="text-gray-400 text-xs font-medium">通知タイミング</p>
+            <div className="flex gap-2">
+              {([{key:'mention',label:'メンション時のみ'},{key:'all',label:'全メッセージ'}] as const).map(opt => (
+                <button key={opt.key} onClick={() => onNotifSettingsChange({...notifSettings, trigger: opt.key})}
+                  className={`flex-1 py-2 text-xs rounded-lg border transition-colors ${notifSettings.trigger===opt.key?'border-blue-500 text-blue-400 bg-blue-500/10':'border-gray-600 text-gray-400 hover:border-gray-400'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Sound toggle */}
+          <div className="flex items-center justify-between">
+            <p className="text-gray-200 text-sm font-medium">通知音</p>
+            <Toggle checked={notifSettings.sound} onChange={v => onNotifSettingsChange({...notifSettings, sound: v})} />
+          </div>
+          {notifSettings.sound && (
+            <div className="flex flex-col gap-2">
+              <p className="text-gray-400 text-xs font-medium">通知音の種類</p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {SOUNDS.map(s => (
+                  <button key={s.key} onClick={() => onNotifSettingsChange({...notifSettings, soundType: s.key})}
+                    className={`py-1.5 text-xs rounded-lg border transition-colors ${notifSettings.soundType===s.key?'border-blue-500 text-blue-400 bg-blue-500/10':'border-gray-600 text-gray-400 hover:border-gray-400'}`}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => playNotifSound(notifSettings.soundType)}
+                className="text-xs text-gray-400 hover:text-white py-1 border border-gray-600 hover:border-gray-400 rounded-lg transition-colors">
+                ▶ テスト再生
+              </button>
+            </div>
+          )}
+          {/* Badge toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-200 text-sm font-medium">未読バッジ</p>
+              <p className="text-gray-500 text-xs mt-0.5">タブタイトルに未読件数を表示</p>
+            </div>
+            <Toggle checked={notifSettings.badge} onChange={v => onNotifSettingsChange({...notifSettings, badge: v})} />
+          </div>
         </div>
       )}
 
@@ -326,6 +488,10 @@ export default function ChatPage() {
   const [showCalPopup, setShowCalPopup] = useState(false)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [editInput, setEditInput]               = useState('')
+  const [onlineUsers, setOnlineUsers]           = useState<string[]>([])
+  const [unreadCount, setUnreadCount]           = useState(0)
+  const [showMembersPanel, setShowMembersPanel] = useState(true)
+  const [notifSettings, setNotifSettings]       = useState<NotifSettings>(DEFAULT_NOTIF)
 
   // チャンネル操作
   const [showAddModal, setShowAddModal]       = useState(false)
@@ -340,16 +506,33 @@ export default function ChatPage() {
   const [inviteSuccess, setInviteSuccess]     = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
-  const socketRef          = useRef<Socket | null>(null)
-  const bottomRef          = useRef<HTMLDivElement>(null)
-  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const socketRef           = useRef<Socket | null>(null)
+  const bottomRef           = useRef<HTMLDivElement>(null)
+  const attachmentInputRef  = useRef<HTMLInputElement>(null)
   const currentChannelIdRef = useRef<number | null>(null)
+  const isTabFocusedRef     = useRef(true)
+  const notifSettingsRef    = useRef<NotifSettings>(DEFAULT_NOTIF)
+
+  useEffect(() => { notifSettingsRef.current = notifSettings }, [notifSettings])
 
   useEffect(() => {
     const savedName = localStorage.getItem('chat_username')
     if (savedName) { setUsername(savedName); setEnteredName(true) }
     try { const c = localStorage.getItem('chat_colors'); if (c) setColors(JSON.parse(c)) } catch {}
+    try { const n = localStorage.getItem('chat_notif'); if (n) setNotifSettings(JSON.parse(n)) } catch {}
   }, [])
+
+  useEffect(() => {
+    const onFocus = () => { isTabFocusedRef.current = true; setUnreadCount(0) }
+    const onBlur  = () => { isTabFocusedRef.current = false }
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur',  onBlur)
+    return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur) }
+  }, [])
+
+  useEffect(() => {
+    document.title = unreadCount > 0 ? `(${unreadCount}) Cyberdyne Chat` : 'Cyberdyne Chat'
+  }, [unreadCount])
 
   useEffect(() => {
     let el = document.getElementById('chat-theme') as HTMLStyleElement | null
@@ -378,9 +561,21 @@ export default function ChatPage() {
     })
     socket.on('new_message', (msg: Message) => {
       if (msg.channelId === currentChannelIdRef.current) setMessages(prev => [...prev, msg])
+      const ns = notifSettingsRef.current
+      const isMention = msg.content.includes(`@${username}`)
+      const shouldNotify = ns.trigger === 'all' || isMention
+      if (msg.username === username) return
+      if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
+      if (!shouldNotify) return
+      if (ns.sound) playNotifSound(ns.soundType)
+      if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        const n = new Notification(msg.username, { body: msg.content || '(添付ファイル)', icon: '/favicon.ico', tag: String(msg.id) })
+        n.onclick = () => { window.focus(); n.close() }
+      }
     })
     socket.on('user_profiles', (profiles: Record<string, UserProfileData>) => setUserProfiles(profiles))
     socket.on('user_statuses', (statuses: Record<string, MeetingStatus>) => setUserStatuses(statuses))
+    socket.on('online_users', (users: string[]) => setOnlineUsers(users))
     socket.on('channel_error', (msg: string) => setErrorMsg(msg))
     socket.on('invite_success', (invitee: string) => setInviteSuccess(`${invitee} を招待しました`))
     socket.on('message_edited', (msg: Message) => {
@@ -451,6 +646,9 @@ export default function ChatPage() {
   function handleColorsChange(newColors: ThemeColors) {
     setColors(newColors); localStorage.setItem('chat_colors', JSON.stringify(newColors))
   }
+  function handleNotifSettingsChange(s: NotifSettings) {
+    setNotifSettings(s); localStorage.setItem('chat_notif', JSON.stringify(s))
+  }
   async function handleAvatarUpload(file: File) {
     const imageData = await resizeImageToDataUrl(file)
     const res = await fetch('/api/avatar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, imageData }) })
@@ -495,6 +693,7 @@ export default function ChatPage() {
   const myAvatarUrl    = userProfiles[username]?.avatarUrl
   const myProfile      = userProfiles[username]
   const myStatus       = userStatuses[username]
+  const allUsers       = [...new Set([...messages.map(m => m.username), username])]
 
   // ---- Login Screen ----
   if (!enteredName) {
@@ -573,6 +772,13 @@ export default function ChatPage() {
               )}
             </>
           ) : <span className="text-gray-400">チャンネルを選択してください</span>}
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setShowMembersPanel(v => !v)}
+              className={`p-1.5 rounded-md transition-colors ${showMembersPanel ? 'text-white bg-white/10' : 'text-gray-400 hover:text-white'}`}
+              title="メンバー一覧">
+              <PeopleIcon />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
@@ -717,6 +923,18 @@ export default function ChatPage() {
         </form>
       </div>
 
+      {/* ---- Members panel ---- */}
+      {showMembersPanel && currentChannel && (
+        <MembersPanel
+          channel={currentChannel}
+          onlineUsers={onlineUsers}
+          allUsers={allUsers}
+          userProfiles={userProfiles}
+          userStatuses={userStatuses}
+          onAvatarClick={setProfileCard}
+        />
+      )}
+
       {/* ---- Calendar popup (sidebar badge click) ---- */}
       {showCalPopup && myStatus?.inMeeting && (
         <>
@@ -817,6 +1035,8 @@ export default function ChatPage() {
           onColorsChange={handleColorsChange}
           onAvatarUpload={handleAvatarUpload}
           onSaveProfileDetails={handleSaveProfileDetails}
+          notifSettings={notifSettings}
+          onNotifSettingsChange={handleNotifSettingsChange}
           onClose={() => setShowSettings(false)}
         />
       )}
