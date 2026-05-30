@@ -4,5 +4,3 @@ app/generated
 *.db
 *.db-*
 .env
-public/avatars/*
-!public/avatars/.gitkeep

@@ -19,6 +19,28 @@ function avatarBgColor(username: string): string {
   return palette[Math.abs(h) % palette.length]
 }
 
+// Canvas でリサイズ（center-crop → 128×128 JPEG）してから base64 data URL を返す
+function resizeImageToDataUrl(file: File, maxPx = 128): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const { naturalWidth: w, naturalHeight: h } = img
+      const crop = Math.min(w, h)
+      const sx = (w - crop) / 2
+      const sy = (h - crop) / 2
+      const canvas = document.createElement('canvas')
+      canvas.width = maxPx
+      canvas.height = maxPx
+      canvas.getContext('2d')!.drawImage(img, sx, sy, crop, crop, 0, 0, maxPx, maxPx)
+      resolve(canvas.toDataURL('image/jpeg', 0.85))
+    }
+    img.onerror = reject
+    img.src = url
+  })
+}
+
 // WCAG relative luminance (0 = black, 1 = white)
 function getLuminance(hex: string): number {
   const r = parseInt(hex.slice(1, 3), 16) / 255
@@ -443,10 +465,12 @@ export default function ChatPage() {
   }
 
   async function handleAvatarUpload(file: File) {
-    const formData = new FormData()
-    formData.append('avatar', file)
-    formData.append('username', username)
-    const res = await fetch('/api/avatar', { method: 'POST', body: formData })
+    const imageData = await resizeImageToDataUrl(file)
+    const res = await fetch('/api/avatar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, imageData }),
+    })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.error ?? 'Upload failed')

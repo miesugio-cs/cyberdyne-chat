@@ -48,7 +48,3 @@ next-env.d.ts
 *.db-journal
 *.db-wal
 *.db-shm
-
-# User-uploaded avatar images (runtime content)
-/public/avatars/*
-!/public/avatars/.gitkeep
