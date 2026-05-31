@@ -11,7 +11,7 @@ interface Channel {
 interface Message {
   id: number; username: string; content: string; channelId: number
   attachmentData: string | null; attachmentName: string | null; attachmentType: string | null
-  createdAt: string; parentId: number | null; replyCount: number
+  createdAt: string; parentId: number | null; replyCount: number; parentUsername?: string
 }
 interface UserProfileData { avatarUrl: string | null; email: string | null; title: string | null }
 interface Attachment { data: string; name: string; type: string }
@@ -781,14 +781,17 @@ export default function ChatPage() {
       if (threadPanelMessageIdRef.current === reply.parentId) {
         setThreadReplies(prev => [...prev, reply])
       }
-      if (reply.username !== username && reply.content.includes(`@${username}`)) {
-        const ns = notifSettingsRef.current
-        if (ns.sound) playNotifSound(ns.soundType)
-        if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
-        if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          const n = new Notification(reply.username, { body: reply.content, icon: '/favicon.ico', tag: String(reply.id) })
-          n.onclick = () => { window.focus(); n.close() }
-        }
+      if (reply.username === username) return
+      const ns = notifSettingsRef.current
+      const isMention   = reply.content.includes(`@${username}`)
+      const isMyThread  = reply.parentUsername === username
+      const shouldNotify = ns.trigger === 'all' || isMention || isMyThread
+      if (!shouldNotify) return
+      if (ns.sound) playNotifSound(ns.soundType)
+      if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
+      if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        const n = new Notification(reply.username, { body: reply.content, icon: '/favicon.ico', tag: String(reply.id) })
+        n.onclick = () => { window.focus(); n.close() }
       }
     })
     socket.on('reply_count_update', ({ messageId, replyCount }: { messageId: number; replyCount: number }) => {

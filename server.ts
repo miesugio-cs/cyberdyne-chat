@@ -436,7 +436,7 @@ app.prepare().then(async () => {
         data: { username, content: trimmed, channelId: parentMsg.channelId, parentId, attachmentData: null, attachmentName: null, attachmentType: null },
       })
       const replyCount = await prisma.message.count({ where: { parentId } })
-      const replyPayload = { ...reply, replyCount: 0 }
+      const replyPayload = { ...reply, replyCount: 0, parentUsername: parentMsg.username }
       const countPayload = { messageId: parentId, replyCount }
       if (!channel.isPrivate) {
         io.emit('thread_reply', replyPayload)
