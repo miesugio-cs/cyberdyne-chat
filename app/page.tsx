@@ -99,36 +99,47 @@ function renderWithMentions(content: string, currentUsername: string): React.Rea
     return part
   })
 }
+// Singleton AudioContext — reused so browser autoplay unlock persists across calls
+let _audioCtx: AudioContext | null = null
+function _getAudioCtx(): AudioContext {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
+    _audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+  }
+  return _audioCtx
+}
 function playNotifSound(type: string) {
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-    const osc = ctx.createOscillator(), gain = ctx.createGain()
-    osc.connect(gain); gain.connect(ctx.destination)
-    const t = ctx.currentTime
-    switch (type) {
-      case 'pop':
-        osc.type = 'sine'; osc.frequency.value = 880
-        gain.gain.setValueAtTime(0.45, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35)
-        osc.start(t); osc.stop(t + 0.35); break
-      case 'chime':
-        osc.type = 'sine'; osc.frequency.value = 1047
-        gain.gain.setValueAtTime(0.4, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 1.5)
-        osc.start(t); osc.stop(t + 1.5); break
-      case 'beep':
-        osc.type = 'square'; osc.frequency.value = 440
-        gain.gain.setValueAtTime(0.15, t); gain.gain.setValueAtTime(0.15, t + 0.25); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4)
-        osc.start(t); osc.stop(t + 0.4); break
-      case 'ding':
-        osc.type = 'sine'; osc.frequency.value = 1500
-        gain.gain.setValueAtTime(0.35, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
-        osc.start(t); osc.stop(t + 0.9); break
-      case 'gentle':
-        osc.type = 'sine'; osc.frequency.value = 523
-        gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.28, t + 0.08)
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 2.0)
-        osc.start(t); osc.stop(t + 2.0); break
+    const ctx = _getAudioCtx()
+    const schedule = () => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain()
+      osc.connect(gain); gain.connect(ctx.destination)
+      const t = ctx.currentTime
+      switch (type) {
+        case 'pop':
+          osc.type = 'sine'; osc.frequency.value = 880
+          gain.gain.setValueAtTime(0.45, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35)
+          osc.start(t); osc.stop(t + 0.35); break
+        case 'chime':
+          osc.type = 'sine'; osc.frequency.value = 1047
+          gain.gain.setValueAtTime(0.4, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 1.5)
+          osc.start(t); osc.stop(t + 1.5); break
+        case 'beep':
+          osc.type = 'square'; osc.frequency.value = 440
+          gain.gain.setValueAtTime(0.15, t); gain.gain.setValueAtTime(0.15, t + 0.25); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4)
+          osc.start(t); osc.stop(t + 0.4); break
+        case 'ding':
+          osc.type = 'sine'; osc.frequency.value = 1500
+          gain.gain.setValueAtTime(0.35, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
+          osc.start(t); osc.stop(t + 0.9); break
+        case 'gentle':
+          osc.type = 'sine'; osc.frequency.value = 523
+          gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.28, t + 0.08)
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 2.0)
+          osc.start(t); osc.stop(t + 2.0); break
+      }
     }
-    setTimeout(() => ctx.close(), 2500)
+    if (ctx.state === 'running') { schedule() }
+    else { ctx.resume().then(schedule).catch(() => {}) }
   } catch {}
 }
 
@@ -498,14 +509,14 @@ function MentionPopup({ candidates, selectedIndex, onSelect }: {
   )
 }
 
-// ---- Mention-aware text input ----
+// ---- Mention-aware text input (textarea: Enter=newline, Cmd/Ctrl+Enter=send) ----
 function MentionInput({ value, onChange, onSubmit, placeholder, disabled, maxLength, className, allUsers }: {
   value: string; onChange: (v: string) => void; onSubmit: () => void
   placeholder?: string; disabled?: boolean; maxLength?: number; className?: string; allUsers: string[]
 }) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const candidates = mentionQuery !== null
     ? allUsers.filter(u => u.toLowerCase().startsWith(mentionQuery.toLowerCase())).slice(0, 8)
@@ -518,7 +529,7 @@ function MentionInput({ value, onChange, onSubmit, placeholder, disabled, maxLen
     else setMentionQuery(null)
   }
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     onChange(e.target.value)
     detectMention(e.target.value, e.target.selectionStart ?? e.target.value.length)
   }
@@ -534,7 +545,7 @@ function MentionInput({ value, onChange, onSubmit, placeholder, disabled, maxLen
     requestAnimationFrame(() => { input.focus(); input.setSelectionRange(newBefore.length, newBefore.length) })
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.nativeEvent.isComposing) return
     if (mentionQuery !== null && candidates.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, candidates.length - 1)); return }
@@ -542,14 +553,19 @@ function MentionInput({ value, onChange, onSubmit, placeholder, disabled, maxLen
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectMention(candidates[mentionIndex]); return }
       if (e.key === 'Escape') { e.preventDefault(); setMentionQuery(null); return }
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit() }
+    // Cmd+Enter (Mac) or Ctrl+Enter (Windows) → send
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(); return }
+    // Plain Enter → newline (default textarea behavior, no preventDefault)
   }
+
+  const rows = Math.max(1, Math.min(5, (value.match(/\n/g) ?? []).length + 1))
 
   return (
     <div className="relative flex-1">
-      <input ref={inputRef} type="text" value={value} onChange={handleChange} onKeyDown={handleKeyDown}
+      <textarea ref={inputRef} value={value} onChange={handleChange} onKeyDown={handleKeyDown}
         onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-        placeholder={placeholder} disabled={disabled} className={className} maxLength={maxLength} />
+        placeholder={placeholder} disabled={disabled} className={className}
+        maxLength={maxLength} rows={rows} style={{ resize: 'none' }} />
       {mentionQuery !== null && candidates.length > 0 && (
         <MentionPopup candidates={candidates} selectedIndex={mentionIndex} onSelect={selectMention} />
       )}
@@ -631,11 +647,11 @@ function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInpu
         <div className="flex gap-2">
           <MentionInput
             value={threadInput} onChange={onInputChange} onSubmit={onSend}
-            placeholder="スレッドに返信..."
-            className="flex-1 bg-gray-700 text-white rounded-full px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+            placeholder="スレッドに返信… (Cmd+Enter で送信)"
+            className="flex-1 bg-gray-700 text-white rounded-xl px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
             maxLength={500} allUsers={allUsers}
           />
-          <button type="submit" disabled={!threadInput.trim()} className="theme-accent-btn text-white rounded-full px-3 py-1.5 text-sm font-semibold">送信</button>
+          <button type="submit" disabled={!threadInput.trim()} className="theme-accent-btn text-white rounded-xl px-3 py-1.5 text-sm font-semibold self-end">送信</button>
         </div>
       </form>
     </aside>
@@ -708,6 +724,14 @@ export default function ChatPage() {
     window.addEventListener('focus', onFocus)
     window.addEventListener('blur',  onBlur)
     return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur) }
+  }, [])
+
+  // Unlock AudioContext on first user interaction (browser autoplay policy)
+  useEffect(() => {
+    const unlock = () => { try { _getAudioCtx().resume() } catch {} }
+    window.addEventListener('click', unlock)
+    window.addEventListener('keydown', unlock)
+    return () => { window.removeEventListener('click', unlock); window.removeEventListener('keydown', unlock) }
   }, [])
 
   useEffect(() => {
@@ -1165,11 +1189,11 @@ export default function ChatPage() {
             <input ref={attachmentInputRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt,.zip,.csv,.xls,.xlsx" className="hidden" onChange={handleAttachmentSelect} />
             <MentionInput
               value={input} onChange={setInput} onSubmit={sendMessage}
-              placeholder={currentChannel ? `#${currentChannel.name} にメッセージを送信` : 'チャンネルを選択してください'}
+              placeholder={currentChannel ? `#${currentChannel.name} にメッセージを送信 (Cmd+Enter で送信)` : 'チャンネルを選択してください'}
               disabled={!currentChannel}
-              className="w-full bg-gray-700 text-white rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
+              className="w-full bg-gray-700 text-white rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
               maxLength={500} allUsers={mentionCandidates} />
-            <button type="submit" disabled={(!input.trim() && !attachment) || !currentChannel} className="theme-accent-btn text-white rounded-full px-5 py-2 font-semibold text-sm">送信</button>
+            <button type="submit" disabled={(!input.trim() && !attachment) || !currentChannel} className="theme-accent-btn text-white rounded-xl px-5 py-2 font-semibold text-sm self-end">送信</button>
           </div>
         </form>
       </div>

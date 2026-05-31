@@ -181,7 +181,7 @@ async function fetchMeetingStatus(cal: CalRecord): Promise<MeetingStatus> {
 }
 
 // ---- App setup ----
-const DEFAULT_CHANNELS = ['general', '経理・事務', 'odori-fit', '潜在美学-yt']
+const DEFAULT_CHANNELS = ['general']
 const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT ?? '3000', 10)
 const app  = next({ dev, port })
