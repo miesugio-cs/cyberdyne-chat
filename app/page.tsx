@@ -11,7 +11,7 @@ interface Channel {
 interface Message {
   id: number; username: string; content: string; channelId: number
   attachmentData: string | null; attachmentName: string | null; attachmentType: string | null
-  createdAt: string
+  createdAt: string; parentId: number | null; replyCount: number
 }
 interface UserProfileData { avatarUrl: string | null; email: string | null; title: string | null }
 interface Attachment { data: string; name: string; type: string }
@@ -99,27 +99,27 @@ function playNotifSound(type: string) {
     switch (type) {
       case 'pop':
         osc.type = 'sine'; osc.frequency.value = 880
-        gain.gain.setValueAtTime(0.3, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
-        osc.start(t); osc.stop(t + 0.12); break
+        gain.gain.setValueAtTime(0.45, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35)
+        osc.start(t); osc.stop(t + 0.35); break
       case 'chime':
         osc.type = 'sine'; osc.frequency.value = 1047
-        gain.gain.setValueAtTime(0.25, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6)
-        osc.start(t); osc.stop(t + 0.6); break
+        gain.gain.setValueAtTime(0.4, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 1.5)
+        osc.start(t); osc.stop(t + 1.5); break
       case 'beep':
         osc.type = 'square'; osc.frequency.value = 440
-        gain.gain.setValueAtTime(0.08, t); gain.gain.setValueAtTime(0.08, t + 0.1); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15)
-        osc.start(t); osc.stop(t + 0.15); break
+        gain.gain.setValueAtTime(0.15, t); gain.gain.setValueAtTime(0.15, t + 0.25); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4)
+        osc.start(t); osc.stop(t + 0.4); break
       case 'ding':
         osc.type = 'sine'; osc.frequency.value = 1500
-        gain.gain.setValueAtTime(0.2, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35)
-        osc.start(t); osc.stop(t + 0.35); break
+        gain.gain.setValueAtTime(0.35, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
+        osc.start(t); osc.stop(t + 0.9); break
       case 'gentle':
         osc.type = 'sine'; osc.frequency.value = 523
-        gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.15, t + 0.05)
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
-        osc.start(t); osc.stop(t + 0.9); break
+        gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(0.28, t + 0.08)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 2.0)
+        osc.start(t); osc.stop(t + 2.0); break
     }
-    setTimeout(() => ctx.close(), 1200)
+    setTimeout(() => ctx.close(), 2500)
   } catch {}
 }
 
@@ -138,6 +138,7 @@ function XIcon()        { return <svg className="w-4 h-4" viewBox="0 0 16 16" fi
 function FileIcon()     { return <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 1H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6L9 1z"/><path d="M9 1v5h5"/></svg> }
 function PeopleIcon()   { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-3 2-4.5 5-4.5s5 1.5 5 4.5"/><circle cx="12" cy="5" r="2"/><path d="M15 13.5c0-2-1.5-3-3-3"/></svg> }
 function BellIcon()     { return <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.5A4.5 4.5 0 0 1 12.5 6v3l1 2h-11l1-2V6A4.5 4.5 0 0 1 8 1.5z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg> }
+function ReplyIcon()    { return <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6h8a4 4 0 0 1 0 8H8"/><path d="M4 4L2 6l2 2"/></svg> }
 
 // ---- Base components ----
 function Avatar({ username, avatarUrl, size = 32 }: { username: string; avatarUrl?: string | null; size?: number }) {
@@ -470,6 +471,91 @@ function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUp
   )
 }
 
+// ---- Thread message row (always left-aligned in thread panel) ----
+function ThreadMessageRow({ msg, userProfiles, onAvatarClick, isParent = false }: {
+  msg: Message; userProfiles: Record<string, UserProfileData>
+  onAvatarClick: (username: string) => void; isParent?: boolean
+}) {
+  const avatarUrl = userProfiles[msg.username]?.avatarUrl
+  return (
+    <div className={`flex items-start gap-2 ${isParent ? 'pb-2' : ''}`}>
+      <button onClick={() => onAvatarClick(msg.username)} className="block rounded-full shrink-0 focus:outline-none mt-0.5">
+        <Avatar username={msg.username} avatarUrl={avatarUrl} size={28} />
+      </button>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 mb-1">
+          <button onClick={() => onAvatarClick(msg.username)} className="text-sm font-medium hover:underline focus:outline-none">{msg.username}</button>
+          <span className="text-xs theme-chat-muted">{formatTime(msg.createdAt)}</span>
+        </div>
+        {msg.content && (
+          <div className={`px-3 py-2 rounded-2xl rounded-tl-none text-sm theme-msg-other inline-block max-w-full ${isParent ? 'opacity-90' : ''}`}>
+            {msg.content}
+          </div>
+        )}
+        {msg.attachmentData && (
+          <div className="mt-1">
+            {msg.attachmentType?.startsWith('image/') ? (
+              <img src={msg.attachmentData} alt={msg.attachmentName ?? 'image'} className="max-w-[200px] max-h-40 rounded-xl object-contain" loading="lazy" />
+            ) : (
+              <a href={msg.attachmentData} download={msg.attachmentName} className="flex items-center gap-2 bg-gray-700/70 px-3 py-2 rounded-xl text-sm text-gray-300 max-w-xs">
+                <FileIcon /><span className="truncate">{msg.attachmentName}</span>
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---- Thread Panel ----
+function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInputChange, onSend, onClose, onAvatarClick }: {
+  parentMessage: Message; replies: Message[]
+  userProfiles: Record<string, UserProfileData>
+  threadInput: string; onInputChange: (v: string) => void
+  onSend: (e: React.FormEvent) => void; onClose: () => void
+  onAvatarClick: (username: string) => void
+}) {
+  const threadBottomRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { threadBottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [replies])
+  return (
+    <aside className="theme-chat-bg w-80 shrink-0 border-l border-white/10 flex flex-col">
+      <div className="px-4 py-3 border-b border-white/10 flex items-center">
+        <span className="text-white font-semibold flex-1">スレッド</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-gray-700/50"><XIcon /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <ThreadMessageRow msg={parentMessage} userProfiles={userProfiles} onAvatarClick={onAvatarClick} isParent />
+        <div className="flex items-center gap-2 my-3">
+          <div className="flex-1 h-px bg-white/10" />
+          <span className="text-xs theme-chat-muted shrink-0">
+            {replies.length > 0 ? `${replies.length}件の返信` : '返信はまだありません'}
+          </span>
+          <div className="flex-1 h-px bg-white/10" />
+        </div>
+        <div className="space-y-3">
+          {replies.map(reply => (
+            <ThreadMessageRow key={reply.id} msg={reply} userProfiles={userProfiles} onAvatarClick={onAvatarClick} />
+          ))}
+        </div>
+        <div ref={threadBottomRef} />
+      </div>
+      <form onSubmit={onSend} className="bg-gray-800/90 border-t border-white/10 px-3 py-2.5">
+        <div className="flex gap-2">
+          <input
+            type="text" value={threadInput} onChange={e => onInputChange(e.target.value)}
+            placeholder="スレッドに返信..."
+            className="flex-1 bg-gray-700 text-white rounded-full px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+            maxLength={500}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(e as unknown as React.FormEvent) } }}
+          />
+          <button type="submit" disabled={!threadInput.trim()} className="theme-accent-btn text-white rounded-full px-3 py-1.5 text-sm font-semibold">送信</button>
+        </div>
+      </form>
+    </aside>
+  )
+}
+
 // ---- Main Page ----
 export default function ChatPage() {
   const [username, setUsername]         = useState('')
@@ -493,6 +579,12 @@ export default function ChatPage() {
   const [showMembersPanel, setShowMembersPanel] = useState(true)
   const [notifSettings, setNotifSettings]       = useState<NotifSettings>(DEFAULT_NOTIF)
 
+  // スレッド
+  const [threadPanelMessageId, setThreadPanelMessageId] = useState<number | null>(null)
+  const [threadParentMessage, setThreadParentMessage]   = useState<Message | null>(null)
+  const [threadReplies, setThreadReplies]               = useState<Message[]>([])
+  const [threadInput, setThreadInput]                   = useState('')
+
   // チャンネル操作
   const [showAddModal, setShowAddModal]       = useState(false)
   const [newChannelName, setNewChannelName]   = useState('')
@@ -506,14 +598,16 @@ export default function ChatPage() {
   const [inviteSuccess, setInviteSuccess]     = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
-  const socketRef           = useRef<Socket | null>(null)
-  const bottomRef           = useRef<HTMLDivElement>(null)
-  const attachmentInputRef  = useRef<HTMLInputElement>(null)
-  const currentChannelIdRef = useRef<number | null>(null)
-  const isTabFocusedRef     = useRef(true)
-  const notifSettingsRef    = useRef<NotifSettings>(DEFAULT_NOTIF)
+  const socketRef               = useRef<Socket | null>(null)
+  const bottomRef               = useRef<HTMLDivElement>(null)
+  const attachmentInputRef      = useRef<HTMLInputElement>(null)
+  const currentChannelIdRef     = useRef<number | null>(null)
+  const isTabFocusedRef         = useRef(true)
+  const notifSettingsRef        = useRef<NotifSettings>(DEFAULT_NOTIF)
+  const threadPanelMessageIdRef = useRef<number | null>(null)
 
   useEffect(() => { notifSettingsRef.current = notifSettings }, [notifSettings])
+  useEffect(() => { threadPanelMessageIdRef.current = threadPanelMessageId }, [threadPanelMessageId])
 
   useEffect(() => {
     const savedName = localStorage.getItem('chat_username')
@@ -541,6 +635,9 @@ export default function ChatPage() {
   }, [colors])
 
   useEffect(() => { currentChannelIdRef.current = currentChannelId }, [currentChannelId])
+  useEffect(() => {
+    setThreadPanelMessageId(null); setThreadParentMessage(null); setThreadReplies([]); setThreadInput('')
+  }, [currentChannelId])
 
   useEffect(() => {
     if (!enteredName) return
@@ -580,9 +677,25 @@ export default function ChatPage() {
     socket.on('invite_success', (invitee: string) => setInviteSuccess(`${invitee} を招待しました`))
     socket.on('message_edited', (msg: Message) => {
       setMessages(prev => prev.map(m => m.id === msg.id ? msg : m))
+      setThreadReplies(prev => prev.map(m => m.id === msg.id ? msg : m))
+      setThreadParentMessage(prev => prev?.id === msg.id ? msg : prev)
     })
     socket.on('message_deleted', ({ messageId }: { messageId: number }) => {
       setMessages(prev => prev.filter(m => m.id !== messageId))
+      setThreadReplies(prev => prev.filter(m => m.id !== messageId))
+      setThreadPanelMessageId(prev => { if (prev === messageId) { setThreadParentMessage(null); return null } return prev })
+    })
+    socket.on('thread_data', ({ parent, replies }: { parent: Message; replies: Message[] }) => {
+      setThreadParentMessage(parent); setThreadReplies(replies); setThreadPanelMessageId(parent.id)
+    })
+    socket.on('thread_reply', (reply: Message) => {
+      if (threadPanelMessageIdRef.current === reply.parentId) {
+        setThreadReplies(prev => [...prev, reply])
+      }
+    })
+    socket.on('reply_count_update', ({ messageId, replyCount }: { messageId: number; replyCount: number }) => {
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, replyCount } : m))
+      setThreadParentMessage(prev => prev?.id === messageId ? { ...prev, replyCount } : prev)
     })
 
     const params = new URLSearchParams(window.location.search)
@@ -666,6 +779,15 @@ export default function ChatPage() {
   }
   function handleDeleteMessage(messageId: number) {
     socketRef.current?.emit('delete_message', { messageId })
+  }
+  function handleOpenThread(messageId: number) {
+    setThreadInput(''); socketRef.current?.emit('get_thread', messageId)
+  }
+  function handleSendThreadReply(e: React.FormEvent) {
+    e.preventDefault()
+    if (!threadInput.trim() || !threadParentMessage || !socketRef.current) return
+    socketRef.current.emit('send_thread_reply', { content: threadInput.trim(), parentId: threadParentMessage.id })
+    setThreadInput('')
   }
   function handleSaveProfileDetails(email: string, title: string) {
     socketRef.current?.emit('update_profile_details', { email, title })
@@ -804,9 +926,13 @@ export default function ChatPage() {
                   </div>
                 )}
 
-                {/* Edit / Delete buttons — own messages only */}
+                {/* Action buttons — own messages: reply + edit + delete */}
                 {isMe && !isEditing && (
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 self-center">
+                    <button onClick={() => handleOpenThread(msg.id)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors" title="返信">
+                      <ReplyIcon />
+                    </button>
                     <button onClick={() => { setEditingMessageId(msg.id); setEditInput(msg.content) }}
                       className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors" title="編集">
                       <PencilIcon />
@@ -874,7 +1000,23 @@ export default function ChatPage() {
                   <span className="text-xs mt-1 mx-1 theme-chat-muted">
                     {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
                   </span>
+                  {(msg.replyCount ?? 0) > 0 && (
+                    <button onClick={() => handleOpenThread(msg.id)}
+                      className="mt-0.5 mx-1 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
+                      <ReplyIcon />返信 {msg.replyCount}件
+                    </button>
+                  )}
                 </div>
+
+                {/* Reply button — other user's messages */}
+                {!isMe && !isEditing && (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center self-center">
+                    <button onClick={() => handleOpenThread(msg.id)}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors" title="返信">
+                      <ReplyIcon />
+                    </button>
+                  </div>
+                )}
 
                 {/* My avatar — clickable */}
                 {isMe && (
@@ -923,8 +1065,22 @@ export default function ChatPage() {
         </form>
       </div>
 
-      {/* ---- Members panel ---- */}
-      {showMembersPanel && currentChannel && (
+      {/* ---- Thread panel ---- */}
+      {threadPanelMessageId !== null && threadParentMessage !== null && (
+        <ThreadPanel
+          parentMessage={threadParentMessage}
+          replies={threadReplies}
+          userProfiles={userProfiles}
+          threadInput={threadInput}
+          onInputChange={setThreadInput}
+          onSend={handleSendThreadReply}
+          onClose={() => { setThreadPanelMessageId(null); setThreadParentMessage(null); setThreadReplies([]) }}
+          onAvatarClick={setProfileCard}
+        />
+      )}
+
+      {/* ---- Members panel (hidden when thread panel is open) ---- */}
+      {showMembersPanel && currentChannel && threadPanelMessageId === null && (
         <MembersPanel
           channel={currentChannel}
           onlineUsers={onlineUsers}

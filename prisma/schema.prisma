@@ -27,15 +27,18 @@ model ChannelMember {
 }
 
 model Message {
-  id             Int      @id @default(autoincrement())
+  id             Int       @id @default(autoincrement())
   username       String
   content        String
   channelId      Int
-  channel        Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channel        Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
   attachmentData String?
   attachmentName String?
   attachmentType String?
-  createdAt      DateTime @default(now())
+  parentId       Int?
+  parent         Message?  @relation("ThreadReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies        Message[] @relation("ThreadReplies")
+  createdAt      DateTime  @default(now())
 }
 
 model UserProfile {

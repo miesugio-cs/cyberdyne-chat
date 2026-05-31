@@ -309,11 +309,13 @@ app.prepare().then(async () => {
     ))
 
     if (channels.length > 0) {
-      const messages = await prisma.message.findMany({
-        where: { channelId: channels[0].id },
+      const rawMessages = await prisma.message.findMany({
+        where: { channelId: channels[0].id, parentId: null },
         orderBy: { createdAt: 'asc' },
         take: 30,
+        include: { _count: { select: { replies: true } } },
       })
+      const messages = rawMessages.map(({ _count, ...m }) => ({ ...m, replyCount: _count.replies }))
       socket.emit('history', { channelId: channels[0].id, messages })
     }
 
@@ -323,9 +325,13 @@ app.prepare().then(async () => {
       })
       if (!channel) return
       if (channel.isPrivate && !channel.members.some((m) => m.username === username)) return
-      const messages = await prisma.message.findMany({
-        where: { channelId }, orderBy: { createdAt: 'asc' }, take: 30,
+      const rawMessages = await prisma.message.findMany({
+        where: { channelId, parentId: null },
+        orderBy: { createdAt: 'asc' },
+        take: 30,
+        include: { _count: { select: { replies: true } } },
       })
+      const messages = rawMessages.map(({ _count, ...m }) => ({ ...m, replyCount: _count.replies }))
       socket.emit('history', { channelId, messages })
     })
 
@@ -347,7 +353,7 @@ app.prepare().then(async () => {
           attachmentType: data.attachmentType ?? null,
         },
       })
-      await emitNewMessage(channel.id, channel.isPrivate, channel.members.map((m) => m.username), message)
+      await emitNewMessage(channel.id, channel.isPrivate, channel.members.map((m) => m.username), { ...message, replyCount: 0 })
     })
 
     socket.on('create_channel', async ({ name, isPrivate }: { name: string; isPrivate?: boolean }) => {
@@ -396,7 +402,56 @@ app.prepare().then(async () => {
       const msg = await prisma.message.findUnique({ where: { id: messageId } })
       if (!msg || msg.username !== username) return
       const updated = await prisma.message.update({ where: { id: messageId }, data: { content: trimmed } })
-      io.emit('message_edited', updated)
+      const replyCount = await prisma.message.count({ where: { parentId: messageId } })
+      io.emit('message_edited', { ...updated, replyCount })
+    })
+
+    socket.on('get_thread', async (messageId: number) => {
+      const rawParent = await prisma.message.findUnique({
+        where: { id: messageId },
+        include: { _count: { select: { replies: true } } },
+      })
+      if (!rawParent) return
+      const { _count, ...parent } = rawParent
+      const replies = await prisma.message.findMany({
+        where: { parentId: messageId },
+        orderBy: { createdAt: 'asc' },
+      })
+      socket.emit('thread_data', {
+        parent: { ...parent, replyCount: _count.replies },
+        replies: replies.map(r => ({ ...r, replyCount: 0 })),
+      })
+    })
+
+    socket.on('send_thread_reply', async ({ content, parentId }: { content: string; parentId: number }) => {
+      const trimmed = content.trim(); if (!trimmed) return
+      const parentMsg = await prisma.message.findUnique({
+        where: { id: parentId },
+        include: { channel: { include: { members: { select: { username: true } } } } },
+      })
+      if (!parentMsg) return
+      const channel = parentMsg.channel
+      if (channel.isPrivate && !channel.members.some((m) => m.username === username)) return
+      const reply = await prisma.message.create({
+        data: { username, content: trimmed, channelId: parentMsg.channelId, parentId, attachmentData: null, attachmentName: null, attachmentType: null },
+      })
+      const replyCount = await prisma.message.count({ where: { parentId } })
+      const replyPayload = { ...reply, replyCount: 0 }
+      const countPayload = { messageId: parentId, replyCount }
+      if (!channel.isPrivate) {
+        io.emit('thread_reply', replyPayload)
+        io.emit('reply_count_update', countPayload)
+      } else {
+        const memberSet = new Set(channel.members.map((m) => m.username))
+        const sockets = await io.fetchSockets()
+        for (const s of sockets) {
+          const uname = (s.handshake.auth as { username?: string }).username
+          if (uname && memberSet.has(uname)) {
+            s.emit('thread_reply', replyPayload)
+            s.emit('reply_count_update', countPayload)
+          }
+        }
+      }
     })
 
     socket.on('delete_message', async ({ messageId }: { messageId: number }) => {
