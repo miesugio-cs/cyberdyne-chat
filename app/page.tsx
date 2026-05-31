@@ -746,12 +746,14 @@ export default function ChatPage() {
       if (msg.channelId === currentChannelIdRef.current) setMessages(prev => [...prev, msg])
       const ns = notifSettingsRef.current
       const isMention = msg.content.includes(`@${username}`)
-      const shouldNotify = ns.trigger === 'all' || isMention
+      // own message: sound only on self-mention
       if (msg.username === username) {
         if (isMention && ns.sound) playNotifSound(ns.soundType)
         return
       }
+      // other's message
       if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
+      const shouldNotify = ns.trigger === 'all' || isMention
       if (!shouldNotify) return
       if (ns.sound) playNotifSound(ns.soundType)
       if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -781,14 +783,19 @@ export default function ChatPage() {
       if (threadPanelMessageIdRef.current === reply.parentId) {
         setThreadReplies(prev => [...prev, reply])
       }
-      if (reply.username === username) return
       const ns = notifSettingsRef.current
-      const isMention   = reply.content.includes(`@${username}`)
-      const isMyThread  = reply.parentUsername === username
+      const isMention  = reply.content.includes(`@${username}`)
+      const isMyThread = reply.parentUsername === username
+      // own reply: sound only on self-mention
+      if (reply.username === username) {
+        if (isMention && ns.sound) playNotifSound(ns.soundType)
+        return
+      }
+      // other's reply
+      if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
       const shouldNotify = ns.trigger === 'all' || isMention || isMyThread
       if (!shouldNotify) return
       if (ns.sound) playNotifSound(ns.soundType)
-      if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
       if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         const n = new Notification(reply.username, { body: reply.content, icon: '/favicon.ico', tag: String(reply.id) })
         n.onclick = () => { window.focus(); n.close() }
