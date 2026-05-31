@@ -90,6 +90,15 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = reject; reader.readAsDataURL(file)
   })
 }
+function renderWithMentions(content: string, currentUsername: string): React.ReactNode {
+  return content.split(/(@\w+)/g).map((part, i) => {
+    if (/^@\w+$/.test(part)) {
+      const isMe = part === `@${currentUsername}`
+      return <span key={i} className={`font-semibold ${isMe ? 'bg-yellow-400/20 text-yellow-300 px-0.5 rounded' : 'text-blue-400'}`}>{part}</span>
+    }
+    return part
+  })
+}
 function playNotifSound(type: string) {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
@@ -471,10 +480,87 @@ function SettingsModal({ username, myProfile, colors, onColorsChange, onAvatarUp
   )
 }
 
+// ---- Mention popup ----
+function MentionPopup({ candidates, selectedIndex, onSelect }: {
+  candidates: string[]; selectedIndex: number; onSelect: (u: string) => void
+}) {
+  return (
+    <div className="absolute bottom-full left-0 mb-2 w-52 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-50">
+      {candidates.map((u, i) => (
+        <button key={u} type="button"
+          onMouseDown={e => { e.preventDefault(); onSelect(u) }}
+          className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors ${i === selectedIndex ? 'bg-blue-500/20 text-white' : 'text-gray-200 hover:bg-gray-700/60'}`}>
+          <span className="text-blue-400 font-semibold shrink-0">@</span>
+          <span className="truncate">{u}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---- Mention-aware text input ----
+function MentionInput({ value, onChange, onSubmit, placeholder, disabled, maxLength, className, allUsers }: {
+  value: string; onChange: (v: string) => void; onSubmit: () => void
+  placeholder?: string; disabled?: boolean; maxLength?: number; className?: string; allUsers: string[]
+}) {
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const candidates = mentionQuery !== null
+    ? allUsers.filter(u => u.toLowerCase().startsWith(mentionQuery.toLowerCase())).slice(0, 8)
+    : []
+
+  function detectMention(val: string, cursorPos: number) {
+    const before = val.slice(0, cursorPos)
+    const match = before.match(/(^|\s)@(\w*)$/)
+    if (match) { setMentionQuery(match[2]); setMentionIndex(0) }
+    else setMentionQuery(null)
+  }
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    onChange(e.target.value)
+    detectMention(e.target.value, e.target.selectionStart ?? e.target.value.length)
+  }
+
+  function selectMention(username: string) {
+    const input = inputRef.current!
+    const pos = input.selectionStart ?? value.length
+    const before = value.slice(0, pos)
+    const after = value.slice(pos)
+    const newBefore = before.replace(/(^|\s)@\w*$/, (m, space) => `${space}@${username} `)
+    onChange(newBefore + after)
+    setMentionQuery(null)
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(newBefore.length, newBefore.length) })
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing) return
+    if (mentionQuery !== null && candidates.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, candidates.length - 1)); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setMentionIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectMention(candidates[mentionIndex]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setMentionQuery(null); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit() }
+  }
+
+  return (
+    <div className="relative flex-1">
+      <input ref={inputRef} type="text" value={value} onChange={handleChange} onKeyDown={handleKeyDown}
+        onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
+        placeholder={placeholder} disabled={disabled} className={className} maxLength={maxLength} />
+      {mentionQuery !== null && candidates.length > 0 && (
+        <MentionPopup candidates={candidates} selectedIndex={mentionIndex} onSelect={selectMention} />
+      )}
+    </div>
+  )
+}
+
 // ---- Thread message row (always left-aligned in thread panel) ----
-function ThreadMessageRow({ msg, userProfiles, onAvatarClick, isParent = false }: {
+function ThreadMessageRow({ msg, userProfiles, onAvatarClick, isParent = false, currentUsername }: {
   msg: Message; userProfiles: Record<string, UserProfileData>
-  onAvatarClick: (username: string) => void; isParent?: boolean
+  onAvatarClick: (username: string) => void; isParent?: boolean; currentUsername: string
 }) {
   const avatarUrl = userProfiles[msg.username]?.avatarUrl
   return (
@@ -489,7 +575,7 @@ function ThreadMessageRow({ msg, userProfiles, onAvatarClick, isParent = false }
         </div>
         {msg.content && (
           <div className={`px-3 py-2 rounded-2xl rounded-tl-none text-sm theme-msg-other inline-block max-w-full ${isParent ? 'opacity-90' : ''}`}>
-            {msg.content}
+            {renderWithMentions(msg.content, currentUsername)}
           </div>
         )}
         {msg.attachmentData && (
@@ -509,12 +595,13 @@ function ThreadMessageRow({ msg, userProfiles, onAvatarClick, isParent = false }
 }
 
 // ---- Thread Panel ----
-function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInputChange, onSend, onClose, onAvatarClick }: {
+function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInputChange, onSend, onClose, onAvatarClick, allUsers, currentUsername }: {
   parentMessage: Message; replies: Message[]
   userProfiles: Record<string, UserProfileData>
   threadInput: string; onInputChange: (v: string) => void
-  onSend: (e: React.FormEvent) => void; onClose: () => void
+  onSend: () => void; onClose: () => void
   onAvatarClick: (username: string) => void
+  allUsers: string[]; currentUsername: string
 }) {
   const threadBottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => { threadBottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [replies])
@@ -525,7 +612,7 @@ function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInpu
         <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded-md hover:bg-gray-700/50"><XIcon /></button>
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-3">
-        <ThreadMessageRow msg={parentMessage} userProfiles={userProfiles} onAvatarClick={onAvatarClick} isParent />
+        <ThreadMessageRow msg={parentMessage} userProfiles={userProfiles} onAvatarClick={onAvatarClick} isParent currentUsername={currentUsername} />
         <div className="flex items-center gap-2 my-3">
           <div className="flex-1 h-px bg-white/10" />
           <span className="text-xs theme-chat-muted shrink-0">
@@ -535,19 +622,18 @@ function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInpu
         </div>
         <div className="space-y-3">
           {replies.map(reply => (
-            <ThreadMessageRow key={reply.id} msg={reply} userProfiles={userProfiles} onAvatarClick={onAvatarClick} />
+            <ThreadMessageRow key={reply.id} msg={reply} userProfiles={userProfiles} onAvatarClick={onAvatarClick} currentUsername={currentUsername} />
           ))}
         </div>
         <div ref={threadBottomRef} />
       </div>
-      <form onSubmit={onSend} className="bg-gray-800/90 border-t border-white/10 px-3 py-2.5">
+      <form onSubmit={e => { e.preventDefault(); onSend() }} className="bg-gray-800/90 border-t border-white/10 px-3 py-2.5">
         <div className="flex gap-2">
-          <input
-            type="text" value={threadInput} onChange={e => onInputChange(e.target.value)}
+          <MentionInput
+            value={threadInput} onChange={onInputChange} onSubmit={onSend}
             placeholder="スレッドに返信..."
             className="flex-1 bg-gray-700 text-white rounded-full px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
-            maxLength={500}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(e as unknown as React.FormEvent) } }}
+            maxLength={500} allUsers={allUsers}
           />
           <button type="submit" disabled={!threadInput.trim()} className="theme-accent-btn text-white rounded-full px-3 py-1.5 text-sm font-semibold">送信</button>
         </div>
@@ -692,6 +778,15 @@ export default function ChatPage() {
       if (threadPanelMessageIdRef.current === reply.parentId) {
         setThreadReplies(prev => [...prev, reply])
       }
+      if (reply.username !== username && reply.content.includes(`@${username}`)) {
+        const ns = notifSettingsRef.current
+        if (ns.sound) playNotifSound(ns.soundType)
+        if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
+        if (ns.enabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          const n = new Notification(reply.username, { body: reply.content, icon: '/favicon.ico', tag: String(reply.id) })
+          n.onclick = () => { window.focus(); n.close() }
+        }
+      }
     })
     socket.on('reply_count_update', ({ messageId, replyCount }: { messageId: number; replyCount: number }) => {
       setMessages(prev => prev.map(m => m.id === messageId ? { ...m, replyCount } : m))
@@ -719,8 +814,7 @@ export default function ChatPage() {
     const name = username.trim(); if (!name) return
     localStorage.setItem('chat_username', name); setUsername(name); setEnteredName(true)
   }
-  function handleSend(e: React.FormEvent) {
-    e.preventDefault()
+  function sendMessage() {
     if ((!input.trim() && !attachment) || !socketRef.current || currentChannelId === null) return
     socketRef.current.emit('send_message', {
       username, content: input.trim(), channelId: currentChannelId,
@@ -730,6 +824,7 @@ export default function ChatPage() {
     })
     setInput(''); setAttachment(null)
   }
+  function handleSend(e: React.FormEvent) { e.preventDefault(); sendMessage() }
   function switchChannel(id: number) {
     if (id === currentChannelId) return
     setMessages([]); socketRef.current?.emit('join_channel', id)
@@ -783,8 +878,7 @@ export default function ChatPage() {
   function handleOpenThread(messageId: number) {
     setThreadInput(''); socketRef.current?.emit('get_thread', messageId)
   }
-  function handleSendThreadReply(e: React.FormEvent) {
-    e.preventDefault()
+  function handleSendThreadReply() {
     if (!threadInput.trim() || !threadParentMessage || !socketRef.current) return
     socketRef.current.emit('send_thread_reply', { content: threadInput.trim(), parentId: threadParentMessage.id })
     setThreadInput('')
@@ -815,7 +909,8 @@ export default function ChatPage() {
   const myAvatarUrl    = userProfiles[username]?.avatarUrl
   const myProfile      = userProfiles[username]
   const myStatus       = userStatuses[username]
-  const allUsers       = [...new Set([...messages.map(m => m.username), username])]
+  const allUsers           = [...new Set([...messages.map(m => m.username), username])]
+  const mentionCandidates  = [...new Set([...allUsers, ...onlineUsers])]
 
   // ---- Login Screen ----
   if (!enteredName) {
@@ -979,7 +1074,7 @@ export default function ChatPage() {
                     <>
                       {(msg.content || !msg.attachmentData) && (
                         <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'theme-msg-self rounded-tr-none' : 'theme-msg-other rounded-tl-none'}`}>
-                          {msg.content || '(添付ファイル)'}
+                          {msg.content ? renderWithMentions(msg.content, username) : '(添付ファイル)'}
                         </div>
                       )}
                       {msg.attachmentData && (
@@ -1055,12 +1150,12 @@ export default function ChatPage() {
               {attachmentLoading ? <SpinnerIcon /> : <PaperclipIcon />}
             </button>
             <input ref={attachmentInputRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt,.zip,.csv,.xls,.xlsx" className="hidden" onChange={handleAttachmentSelect} />
-            <input type="text" value={input} onChange={e => setInput(e.target.value)}
+            <MentionInput
+              value={input} onChange={setInput} onSubmit={sendMessage}
               placeholder={currentChannel ? `#${currentChannel.name} にメッセージを送信` : 'チャンネルを選択してください'}
               disabled={!currentChannel}
-              className="flex-1 bg-gray-700 text-white rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
-              maxLength={500}
-              onKeyDown={e => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }} />
+              className="w-full bg-gray-700 text-white rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
+              maxLength={500} allUsers={mentionCandidates} />
             <button type="submit" disabled={(!input.trim() && !attachment) || !currentChannel} className="theme-accent-btn text-white rounded-full px-5 py-2 font-semibold text-sm">送信</button>
           </div>
         </form>
@@ -1077,6 +1172,8 @@ export default function ChatPage() {
           onSend={handleSendThreadReply}
           onClose={() => { setThreadPanelMessageId(null); setThreadParentMessage(null); setThreadReplies([]) }}
           onAvatarClick={setProfileCard}
+          allUsers={mentionCandidates}
+          currentUsername={username}
         />
       )}
 
