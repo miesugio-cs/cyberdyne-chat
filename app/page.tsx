@@ -747,7 +747,10 @@ export default function ChatPage() {
       const ns = notifSettingsRef.current
       const isMention = msg.content.includes(`@${username}`)
       const shouldNotify = ns.trigger === 'all' || isMention
-      if (msg.username === username) return
+      if (msg.username === username) {
+        if (isMention && ns.sound) playNotifSound(ns.soundType)
+        return
+      }
       if (!isTabFocusedRef.current && ns.badge) setUnreadCount(c => c + 1)
       if (!shouldNotify) return
       if (ns.sound) playNotifSound(ns.soundType)
