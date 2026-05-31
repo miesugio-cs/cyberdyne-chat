@@ -547,7 +547,7 @@ function ThreadPanel({ parentMessage, replies, userProfiles, threadInput, onInpu
             placeholder="スレッドに返信..."
             className="flex-1 bg-gray-700 text-white rounded-full px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
             maxLength={500}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(e as unknown as React.FormEvent) } }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(e as unknown as React.FormEvent) } }}
           />
           <button type="submit" disabled={!threadInput.trim()} className="theme-accent-btn text-white rounded-full px-3 py-1.5 text-sm font-semibold">送信</button>
         </div>
@@ -966,7 +966,7 @@ export default function ChatPage() {
                         rows={Math.max(1, Math.min(5, editInput.split('\n').length + 1))}
                         autoFocus
                         onKeyDown={e => {
-                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSave(msg.id) }
+                          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleEditSave(msg.id) }
                           if (e.key === 'Escape') setEditingMessageId(null)
                         }}
                       />
@@ -1059,7 +1059,8 @@ export default function ChatPage() {
               placeholder={currentChannel ? `#${currentChannel.name} にメッセージを送信` : 'チャンネルを選択してください'}
               disabled={!currentChannel}
               className="flex-1 bg-gray-700 text-white rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-sm disabled:opacity-50"
-              maxLength={500} />
+              maxLength={500}
+              onKeyDown={e => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }} />
             <button type="submit" disabled={(!input.trim() && !attachment) || !currentChannel} className="theme-accent-btn text-white rounded-full px-5 py-2 font-semibold text-sm">送信</button>
           </div>
         </form>
