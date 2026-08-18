@@ -1,36 +1,21 @@
 {
-  "name": "chat-app",
+  "name": "note-shorts-uploader",
   "version": "0.1.0",
   "private": true,
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "prisma generate && next build",
-    "start": "prisma migrate deploy && NODE_ENV=production tsx server.ts",
-    "lint": "eslint"
+    "auth": "tsx src/get-refresh-token.ts",
+    "upload": "tsx src/upload-to-youtube.ts"
   },
   "dependencies": {
-    "@prisma/adapter-better-sqlite3": "^7.8.0",
-    "@prisma/client": "^7.8.0",
-    "better-sqlite3": "^12.10.0",
-    "next": "16.2.6",
-    "prisma": "^7.8.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3",
-    "tsx": "^4.22.3"
+    "googleapis": "^144.0.0",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
-    "tailwindcss": "^4",
+    "tsx": "^4.22.3",
     "typescript": "^5"
   }
 }
